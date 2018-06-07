@@ -1150,7 +1150,7 @@ static int main_internal(int argc, char* argv[]) {
 
   dynamic_string cmd_line;
   get_command_line_as_single_string(cmd_line, argc, argv);
-
+    
   bool status = false;
   if (check_for_option(argc, argv, "corpus_gen")) {
     corpus_gen generator;
@@ -1158,6 +1158,48 @@ static int main_internal(int argc, char* argv[]) {
   } else if (check_for_option(argc, argv, "corpus_test")) {
     corpus_tester tester;
     status = tester.test(cmd_line.get_ptr());
+  }
+  else if (check_for_option(argc, argv, "transcode"))
+  {
+	uint8_vec crn_bytes;
+	FILE *pFile = fopen("delorean.crn", "rb");
+	fseek(pFile, 0, SEEK_END);
+	uint crn_file_size = ftell(pFile);
+	crn_bytes.resize(crn_file_size);
+	fseek(pFile, 0, SEEK_SET);
+	fread(&crn_bytes[0], 1, crn_file_size, pFile);
+	fclose(pFile);
+
+	crnd::crn_level_info level_info;
+	if (crnd::crnd_get_level_info(&crn_bytes[0], crn_file_size, 0, &level_info))
+	{
+		mipmapped_texture mt;
+		mt.init(level_info.m_width, level_info.m_height, 1, 1, PIXEL_FMT_DXT1, "", cDefaultOrientationFlags);
+
+		crnd::crnd_unpack_context pContext = crnd::crnd_unpack_begin(&crn_bytes[0], crn_file_size);
+		if (pContext)
+		{
+			void *dst_ptrs[1] = { mt.get_level(0, 0)->get_dxt_image()->get_element_ptr() };
+
+			crnd::crnd_unpack_level(pContext, 
+				dst_ptrs, 
+				mt.get_level(0, 0)->get_dxt_image()->get_size_in_bytes(), 
+				mt.get_level(0, 0)->get_dxt_image()->get_row_pitch_in_bytes(), 
+				0, crnd::cTFDXT1);
+
+			crnd::crnd_unpack_end(pContext);
+
+			
+			cfile_stream output_file;
+			output_file.open("output.dds", cDataStreamWritable | cDataStreamSeekable);
+						
+			data_stream_serializer serializer(output_file);
+			
+			mt.write_dds(serializer);
+
+			output_file.close();
+		}
+	}
   } else {
     crunch converter;
     status = converter.convert(cmd_line.get_ptr());
