@@ -37,6 +37,8 @@ class crnlib_global_initializer {
     pack_etc1_block_init();
 
     rg_etc1::pack_etc1_block_init();
+
+	crnd::crnd_global_init();
   }
 };
 
