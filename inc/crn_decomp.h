@@ -3651,7 +3651,7 @@ namespace crnd {
 		//const uint low_selector = pSelector->m_lo_selector;
 		//const uint high_selector = pSelector->m_hi_selector;
 
-		// TODO: Precompute the endpoint's low_selector/high_selector this while unpacking selector palettes (not every block)!
+		// TODO: Precompute the selector's low_selector/high_selector while unpacking selector palettes (not every block)!
 		uint selector_hist[4] = { 0, 0, 0, 0 };
 
 #define DO_X(x) { \
@@ -3755,11 +3755,6 @@ namespace crnd {
 
 			return;
 		}
-
-		const uint sel_bits0 = pSrc_block->m_bytes[7];
-		const uint sel_bits1 = pSrc_block->m_bytes[6];
-		const uint sel_bits2 = pSrc_block->m_bytes[5];
-		const uint sel_bits3 = pSrc_block->m_bytes[4];
 
 		// y coords
 		// 4 3210 3210 MSB
