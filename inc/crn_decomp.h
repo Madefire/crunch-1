@@ -1301,6 +1301,10 @@ struct dxt1_block {
     m_selectors[y] |= (val << (x * cDXT1SelectorBits));
   }
 
+  static uint16 pack_unscaled_color(uint r, uint g, uint b) {
+	  return static_cast<uint16>(b | (g << 5U) | (r << 11U));
+  }
+
   static uint16 pack_color(const color_quad_u8& color, bool scaled, uint32 bias = 127U);
   static uint16 pack_color(uint32 r, uint32 g, uint32 b, bool scaled, uint32 bias = 127U);
 
@@ -2938,6 +2942,887 @@ uint32 dxt5_block::get_block_values(uint32* pDst, uint32 l, uint32 h) {
 
 namespace crnd {
 
+#define CRND_SUPPORT_ETC1S_TO_DXT1 1
+	
+#if CRND_SUPPORT_ETC1S_TO_DXT1
+		
+	enum etc_constants
+	{
+		cETC1BytesPerBlock = 8U,
+
+		cETC1SelectorBits = 2U,
+		cETC1SelectorValues = 1U << cETC1SelectorBits,
+		cETC1SelectorMask = cETC1SelectorValues - 1U,
+
+		cETC1BlockShift = 2U,
+		cETC1BlockSize = 1U << cETC1BlockShift,
+
+		cETC1LSBSelectorIndicesBitOffset = 0,
+		cETC1MSBSelectorIndicesBitOffset = 16,
+
+		cETC1FlipBitOffset = 32,
+		cETC1DiffBitOffset = 33,
+
+		cETC1IntenModifierNumBits = 3,
+		cETC1IntenModifierValues = 1 << cETC1IntenModifierNumBits,
+		cETC1RightIntenModifierTableBitOffset = 34,
+		cETC1LeftIntenModifierTableBitOffset = 37,
+
+		// Base+Delta encoding (5 bit bases, 3 bit delta)
+		cETC1BaseColorCompNumBits = 5,
+		cETC1BaseColorCompMax = 1 << cETC1BaseColorCompNumBits,
+
+		cETC1DeltaColorCompNumBits = 3,
+		cETC1DeltaColorComp = 1 << cETC1DeltaColorCompNumBits,
+		cETC1DeltaColorCompMax = 1 << cETC1DeltaColorCompNumBits,
+
+		cETC1BaseColor5RBitOffset = 59,
+		cETC1BaseColor5GBitOffset = 51,
+		cETC1BaseColor5BBitOffset = 43,
+
+		cETC1DeltaColor3RBitOffset = 56,
+		cETC1DeltaColor3GBitOffset = 48,
+		cETC1DeltaColor3BBitOffset = 40,
+
+		// Absolute (non-delta) encoding (two 4-bit per component bases)
+		cETC1AbsColorCompNumBits = 4,
+		cETC1AbsColorCompMax = 1 << cETC1AbsColorCompNumBits,
+
+		cETC1AbsColor4R1BitOffset = 60,
+		cETC1AbsColor4G1BitOffset = 52,
+		cETC1AbsColor4B1BitOffset = 44,
+
+		cETC1AbsColor4R2BitOffset = 56,
+		cETC1AbsColor4G2BitOffset = 48,
+		cETC1AbsColor4B2BitOffset = 40,
+
+		cETC1ColorDeltaMin = -4,
+		cETC1ColorDeltaMax = 3,
+
+		cETC2PlanarROBitOffset = 57,
+		cETC2PlanarGO1BitOffset = 56,
+		cETC2PlanarGO2BitOffset = 49,
+		cETC2PlanarBO1BitOffset = 48,
+		cETC2PlanarBO2BitOffset = 43,
+		cETC2PlanarBO3BitOffset = 39,
+		cETC2PlanarRH1BitOffset = 34,
+		cETC2PlanarRH2BitOffset = 32,
+		cETC2PlanarGHBitOffset = 25,
+		cETC2PlanarBHBitOffset = 19,
+		cETC2PlanarRVBitOffset = 13,
+		cETC2PlanarGVBitOffset = 6,
+		cETC2PlanarBVBitOffset = 0,
+
+		cETC2TR1ABitOffset = 59,
+		cETC2TR1BBitOffset = 56,
+		cETC2TG1BitOffset = 52,
+		cETC2TB1Bitoffset = 48,
+		cETC2TR2BitOffset = 44,
+		cETC2TG2BitOffset = 40,
+		cETC2TB2BitOffset = 36,
+		cETC2TDABitOffset = 34,
+		cETC2TDBBitOffset = 32,
+
+		cETC2HR1BitOffset = 59,
+		cETC2HG1ABitOffset = 56,
+		cETC2HG1BBitOffset = 52,
+		cETC2HB1ABitOffset = 51,
+		cETC2HB1BBitOffset = 47,
+		cETC2HR2BitOffset = 43,
+		cETC2HG2BitOffset = 39,
+		cETC2HB2BitOffset = 35,
+		cETC2HDABitOffset = 34,
+		cETC2HDBBitOffset = 32,
+
+		cETC2THDistanceTableSize = 8,
+
+		// Delta3:
+		// 0   1   2   3   4   5   6   7
+		// 000 001 010 011 100 101 110 111
+		// 0   1   2   3   -4  -3  -2  -1
+	};
+
+	struct dxt_selector_range
+	{
+		uint m_low;
+		uint m_high;
+	};
+
+	struct etc1_to_dxt1_56_solution
+	{
+		uint8 m_lo;
+		uint8 m_hi;
+		uint16 m_err;
+	};
+
+#define DECLARE_ETC1_INTEN_TABLE(name, N) \
+	static const int name[cETC1IntenModifierValues][cETC1SelectorValues] = \
+	{ \
+		{ N * -8,  N * -2,   N * 2,   N * 8 },{ N * -17,  N * -5,  N * 5,  N * 17 },{ N * -29,  N * -9,   N * 9,  N * 29 },{ N * -42, N * -13, N * 13,  N * 42 }, \
+		{ N * -60, N * -18, N * 18,  N * 60 },{ N * -80, N * -24, N * 24,  N * 80 },{ N * -106, N * -33, N * 33, N * 106 },{ N * -183, N * -47, N * 47, N * 183 } \
+	};
+
+	DECLARE_ETC1_INTEN_TABLE(g_etc1_inten_tables, 1);
+	DECLARE_ETC1_INTEN_TABLE(g_etc1_inten_tables3, 1);
+	DECLARE_ETC1_INTEN_TABLE(g_etc1_inten_tables48, 3 * 16);
+
+	static const uint8 g_etc_5_to_8[32] = { 0, 8, 16, 24, 33, 41, 49, 57, 66, 74, 82, 90, 99, 107, 115, 123, 132, 140, 148, 156, 165, 173, 181, 189, 198, 206, 214, 222, 231, 239, 247, 255 };
+
+	struct color_rgba
+	{
+		union
+		{
+			struct
+			{
+				uint8 r;
+				uint8 g;
+				uint8 b;
+				uint8 a;
+			};
+
+			uint8 c[4];
+
+			uint32 m;
+		};
+
+		color_rgba() { }
+
+		color_rgba(uint vr, uint vg, uint vb, uint va) { set(vr, vg, vb, va); }
+
+		void set(uint vr, uint vg, uint vb, uint va) { c[0] = static_cast<uint8>(vr); c[1] = static_cast<uint8>(vg); c[2] = static_cast<uint8>(vb); c[3] = static_cast<uint8>(va); }
+
+		uint8 operator[] (uint idx) const { CRND_ASSERT(idx < 4); return c[idx]; }
+		uint8 &operator[] (uint idx) { CRND_ASSERT(idx < 4); return c[idx]; }
+
+		bool operator== (const color_rgba &rhs) const { return m == rhs.m; }
+	};
+
+	struct decoder_etc_block
+	{
+		// big endian uint64:
+		// bit ofs:  56  48  40  32  24  16   8   0
+		// byte ofs: b0, b1, b2, b3, b4, b5, b6, b7 
+		union
+		{
+			uint64 m_uint64;
+
+			uint32 m_uint32[2];
+
+			uint8 m_bytes[8];
+
+			struct
+			{
+				signed m_dred2 : 3;
+				uint m_red1 : 5;
+
+				signed m_dgreen2 : 3;
+				uint m_green1 : 5;
+
+				signed m_dblue2 : 3;
+				uint m_blue1 : 5;
+
+				uint m_flip : 1;
+				uint m_diff : 1;
+				uint m_cw2 : 3;
+				uint m_cw1 : 3;
+
+				uint m_selectors;
+			} m_differential;
+		};
+
+		inline void clear()
+		{
+			CRND_ASSERT(sizeof(*this) == 8);
+			utils::zero_this(this);
+		}
+
+		inline void set_byte_bits(uint ofs, uint num, uint bits)
+		{
+			CRND_ASSERT((ofs + num) <= 64U);
+			CRND_ASSERT(num && (num < 32U));
+			CRND_ASSERT((ofs >> 3) == ((ofs + num - 1) >> 3));
+			CRND_ASSERT(bits < (1U << num));
+			const uint byte_ofs = 7 - (ofs >> 3);
+			const uint byte_bit_ofs = ofs & 7;
+			const uint mask = (1 << num) - 1;
+			m_bytes[byte_ofs] &= ~(mask << byte_bit_ofs);
+			m_bytes[byte_ofs] |= (bits << byte_bit_ofs);
+		}
+
+		inline void set_flip_bit(bool flip)
+		{
+			m_bytes[3] &= ~1;
+			m_bytes[3] |= static_cast<uint8>(flip);
+		}
+
+		inline void set_diff_bit(bool diff)
+		{
+			m_bytes[3] &= ~2;
+			m_bytes[3] |= (static_cast<uint>(diff) << 1);
+		}
+
+		// Sets intensity modifier table (0-7) used by subblock subblock_id (0 or 1)
+		inline void set_inten_table(uint subblock_id, uint t)
+		{
+			CRND_ASSERT(subblock_id < 2);
+			CRND_ASSERT(t < 8);
+			const uint ofs = subblock_id ? 2 : 5;
+			m_bytes[3] &= ~(7 << ofs);
+			m_bytes[3] |= (t << ofs);
+		}
+
+		// Selector "val" ranges from 0-3 and is a direct index into g_etc1_inten_tables.
+		inline void set_selector(uint x, uint y, uint val)
+		{
+			CRND_ASSERT((x | y | val) < 4);
+			const uint bit_index = x * 4 + y;
+
+			uint8 *p = &m_bytes[7 - (bit_index >> 3)];
+
+			const uint byte_bit_ofs = bit_index & 7;
+			const uint mask = 1 << byte_bit_ofs;
+
+			static const uint8 s_selector_index_to_etc1[4] = { 3, 2, 0, 1 };
+			const uint etc1_val = s_selector_index_to_etc1[val];
+
+			const uint lsb = etc1_val & 1;
+			const uint msb = etc1_val >> 1;
+
+			p[0] &= ~mask;
+			p[0] |= (lsb << byte_bit_ofs);
+
+			p[-2] &= ~mask;
+			p[-2] |= (msb << byte_bit_ofs);
+		}
+
+		// Returned encoded selector value ranges from 0-3 (this is NOT a direct index into g_etc1_inten_tables, see get_selector())
+		inline uint get_raw_selector(uint x, uint y) const
+		{
+			CRND_ASSERT((x | y) < 4);
+
+			const uint bit_index = x * 4 + y;
+			const uint byte_bit_ofs = bit_index & 7;
+			const uint8 *p = &m_bytes[7 - (bit_index >> 3)];
+			const uint lsb = (p[0] >> byte_bit_ofs) & 1;
+			const uint msb = (p[-2] >> byte_bit_ofs) & 1;
+			const uint val = lsb | (msb << 1);
+
+			return val;
+		}
+
+		// Returned selector value ranges from 0-3 and is a direct index into g_etc1_inten_tables.
+		inline uint get_selector(uint x, uint y) const
+		{
+			static const uint8 s_etc1_to_selector_index[cETC1SelectorValues] = { 2, 3, 1, 0 };
+			return s_etc1_to_selector_index[get_raw_selector(x, y)];
+		}
+
+		inline void set_raw_selector_bits(uint bits)
+		{
+			m_bytes[4] = static_cast<uint8>(bits);
+			m_bytes[5] = static_cast<uint8>(bits >> 8);
+			m_bytes[6] = static_cast<uint8>(bits >> 16);
+			m_bytes[7] = static_cast<uint8>(bits >> 24);
+		}
+
+		inline bool are_all_selectors_the_same() const
+		{
+			uint v = *reinterpret_cast<const uint32 *>(&m_bytes[4]);
+
+			if ((v == 0xFFFFFFFF) || (v == 0xFFFF) || (!v) || (v == 0xFFFF0000))
+				return true;
+
+			return false;
+		}
+
+		inline void set_raw_selector_bits(uint8 byte0, uint8 byte1, uint8 byte2, uint8 byte3)
+		{
+			m_bytes[4] = byte0;
+			m_bytes[5] = byte1;
+			m_bytes[6] = byte2;
+			m_bytes[7] = byte3;
+		}
+
+		inline uint get_raw_selector_bits() const
+		{
+			return m_bytes[4] | (m_bytes[5] << 8) | (m_bytes[6] << 16) | (m_bytes[7] << 24);
+		}
+
+		inline void set_base4_color(uint idx, uint16 c)
+		{
+			if (idx)
+			{
+				set_byte_bits(cETC1AbsColor4R2BitOffset, 4, (c >> 8) & 15);
+				set_byte_bits(cETC1AbsColor4G2BitOffset, 4, (c >> 4) & 15);
+				set_byte_bits(cETC1AbsColor4B2BitOffset, 4, c & 15);
+			}
+			else
+			{
+				set_byte_bits(cETC1AbsColor4R1BitOffset, 4, (c >> 8) & 15);
+				set_byte_bits(cETC1AbsColor4G1BitOffset, 4, (c >> 4) & 15);
+				set_byte_bits(cETC1AbsColor4B1BitOffset, 4, c & 15);
+			}
+		}
+
+		inline void set_base5_color(uint16 c)
+		{
+			set_byte_bits(cETC1BaseColor5RBitOffset, 5, (c >> 10) & 31);
+			set_byte_bits(cETC1BaseColor5GBitOffset, 5, (c >> 5) & 31);
+			set_byte_bits(cETC1BaseColor5BBitOffset, 5, c & 31);
+		}
+
+		void set_delta3_color(uint16 c)
+		{
+			set_byte_bits(cETC1DeltaColor3RBitOffset, 3, (c >> 6) & 7);
+			set_byte_bits(cETC1DeltaColor3GBitOffset, 3, (c >> 3) & 7);
+			set_byte_bits(cETC1DeltaColor3BBitOffset, 3, c & 7);
+		}
+
+		void set_block_color4(const color_rgba &c0_unscaled, const color_rgba &c1_unscaled)
+		{
+			set_diff_bit(false);
+
+			set_base4_color(0, pack_color4(c0_unscaled, false));
+			set_base4_color(1, pack_color4(c1_unscaled, false));
+		}
+
+		void set_block_color5(const color_rgba &c0_unscaled, const color_rgba &c1_unscaled)
+		{
+			set_diff_bit(true);
+
+			set_base5_color(pack_color5(c0_unscaled, false));
+
+			int dr = c1_unscaled.r - c0_unscaled.r;
+			int dg = c1_unscaled.g - c0_unscaled.g;
+			int db = c1_unscaled.b - c0_unscaled.b;
+
+			set_delta3_color(pack_delta3(dr, dg, db));
+		}
+
+		bool set_block_color5_check(const color_rgba &c0_unscaled, const color_rgba &c1_unscaled)
+		{
+			set_diff_bit(true);
+
+			set_base5_color(pack_color5(c0_unscaled, false));
+
+			int dr = c1_unscaled.r - c0_unscaled.r;
+			int dg = c1_unscaled.g - c0_unscaled.g;
+			int db = c1_unscaled.b - c0_unscaled.b;
+
+			if (((dr < cETC1ColorDeltaMin) || (dr > cETC1ColorDeltaMax)) ||
+				((dg < cETC1ColorDeltaMin) || (dg > cETC1ColorDeltaMax)) ||
+				((db < cETC1ColorDeltaMin) || (db > cETC1ColorDeltaMax)))
+				return false;
+
+			set_delta3_color(pack_delta3(dr, dg, db));
+
+			return true;
+		}
+
+		inline uint get_byte_bits(uint ofs, uint num) const
+		{
+			CRND_ASSERT((ofs + num) <= 64U);
+			CRND_ASSERT(num && (num <= 8U));
+			CRND_ASSERT((ofs >> 3) == ((ofs + num - 1) >> 3));
+			const uint byte_ofs = 7 - (ofs >> 3);
+			const uint byte_bit_ofs = ofs & 7;
+			return (m_bytes[byte_ofs] >> byte_bit_ofs) & ((1 << num) - 1);
+		}
+
+		inline uint16 get_base5_color() const
+		{
+			const uint r = get_byte_bits(cETC1BaseColor5RBitOffset, 5);
+			const uint g = get_byte_bits(cETC1BaseColor5GBitOffset, 5);
+			const uint b = get_byte_bits(cETC1BaseColor5BBitOffset, 5);
+			return static_cast<uint16>(b | (g << 5U) | (r << 10U));
+		}
+
+		inline color_rgba get_base5_color_unscaled() const
+		{
+			return color_rgba(m_differential.m_red1, m_differential.m_green1, m_differential.m_blue1, 255);
+		}
+
+		inline uint get_inten_table(uint subblock_id) const
+		{
+			CRND_ASSERT(subblock_id < 2);
+			const uint ofs = subblock_id ? 2 : 5;
+			return (m_bytes[3] >> ofs) & 7;
+		}
+
+		static uint16 pack_color4(const color_rgba& color, bool scaled, uint bias = 127U)
+		{
+			return pack_color4(color.r, color.g, color.b, scaled, bias);
+		}
+
+		static uint16 pack_color4(uint r, uint g, uint b, bool scaled, uint bias = 127U)
+		{
+			if (scaled)
+			{
+				r = (r * 15U + bias) / 255U;
+				g = (g * 15U + bias) / 255U;
+				b = (b * 15U + bias) / 255U;
+			}
+
+			r = math::minimum(r, 15U);
+			g = math::minimum(g, 15U);
+			b = math::minimum(b, 15U);
+
+			return static_cast<uint16>(b | (g << 4U) | (r << 8U));
+		}
+
+		static uint16 pack_color5(const color_rgba& color, bool scaled, uint bias = 127U)
+		{
+			return pack_color5(color.r, color.g, color.b, scaled, bias);
+		}
+
+		static uint16 pack_color5(uint r, uint g, uint b, bool scaled, uint bias = 127U)
+		{
+			if (scaled)
+			{
+				r = (r * 31U + bias) / 255U;
+				g = (g * 31U + bias) / 255U;
+				b = (b * 31U + bias) / 255U;
+			}
+
+			r = math::minimum(r, 31U);
+			g = math::minimum(g, 31U);
+			b = math::minimum(b, 31U);
+
+			return static_cast<uint16>(b | (g << 5U) | (r << 10U));
+		}
+
+		uint16 pack_delta3(const color_rgba& color)
+		{
+			return pack_delta3(color.r, color.g, color.b);
+		}
+
+		uint16 pack_delta3(int r, int g, int b)
+		{
+			CRND_ASSERT((r >= cETC1ColorDeltaMin) && (r <= cETC1ColorDeltaMax));
+			CRND_ASSERT((g >= cETC1ColorDeltaMin) && (g <= cETC1ColorDeltaMax));
+			CRND_ASSERT((b >= cETC1ColorDeltaMin) && (b <= cETC1ColorDeltaMax));
+			if (r < 0) r += 8;
+			if (g < 0) g += 8;
+			if (b < 0) b += 8;
+			return static_cast<uint16>(b | (g << 3) | (r << 6));
+		}
+
+		static color_rgba unpack_color5(uint16 packed_color5, bool scaled, uint alpha = 255)
+		{
+			uint b = packed_color5 & 31U;
+			uint g = (packed_color5 >> 5U) & 31U;
+			uint r = (packed_color5 >> 10U) & 31U;
+
+			if (scaled)
+			{
+				b = (b << 3U) | (b >> 2U);
+				g = (g << 3U) | (g >> 2U);
+				r = (r << 3U) | (r >> 2U);
+			}
+
+			return color_rgba(r, g, b, alpha);
+		}
+
+		static void unpack_color5(uint& r, uint& g, uint& b, uint16 packed_color5, bool scaled)
+		{
+			color_rgba c(unpack_color5(packed_color5, scaled, 0));
+			r = c.r;
+			g = c.g;
+			b = c.b;
+		}
+
+		static void get_diff_subblock_colors(color_rgba* pDst, uint16 packed_color5, uint table_idx)
+		{
+			CRND_ASSERT(table_idx < cETC1IntenModifierValues);
+			const int *pInten_modifer_table = &g_etc1_inten_tables[table_idx][0];
+
+			uint r, g, b;
+			unpack_color5(r, g, b, packed_color5, true);
+
+			const int ir = static_cast<int>(r), ig = static_cast<int>(g), ib = static_cast<int>(b);
+
+			const int y0 = pInten_modifer_table[0];
+			pDst[0].set(clamp255(ir + y0), clamp255(ig + y0), clamp255(ib + y0), 255);
+
+			const int y1 = pInten_modifer_table[1];
+			pDst[1].set(clamp255(ir + y1), clamp255(ig + y1), clamp255(ib + y1), 255);
+
+			const int y2 = pInten_modifer_table[2];
+			pDst[2].set(clamp255(ir + y2), clamp255(ig + y2), clamp255(ib + y2), 255);
+
+			const int y3 = pInten_modifer_table[3];
+			pDst[3].set(clamp255(ir + y3), clamp255(ig + y3), clamp255(ib + y3), 255);
+		}
+
+		static int clamp255(int x)
+		{
+			if (x & 0xFFFFFF00)
+			{
+				if (x < 0)
+					x = 0;
+				else if (x > 255)
+					x = 255;
+			}
+
+			return x;
+		}
+
+		static void get_block_colors5(color_rgba *pBlock_colors, const color_rgba &base_color5, uint inten_table)
+		{
+			color_rgba b(base_color5);
+
+			b.r = (b.r << 3) | (b.r >> 2);
+			b.g = (b.g << 3) | (b.g >> 2);
+			b.b = (b.b << 3) | (b.b >> 2);
+
+			const int* pInten_table = g_etc1_inten_tables[inten_table];
+
+			pBlock_colors[0].set(clamp255(b.r + pInten_table[0]), clamp255(b.g + pInten_table[0]), clamp255(b.b + pInten_table[0]), 255);
+			pBlock_colors[1].set(clamp255(b.r + pInten_table[1]), clamp255(b.g + pInten_table[1]), clamp255(b.b + pInten_table[1]), 255);
+			pBlock_colors[2].set(clamp255(b.r + pInten_table[2]), clamp255(b.g + pInten_table[2]), clamp255(b.b + pInten_table[2]), 255);
+			pBlock_colors[3].set(clamp255(b.r + pInten_table[3]), clamp255(b.g + pInten_table[3]), clamp255(b.b + pInten_table[3]), 255);
+		}
+
+		static void get_block_colors5_y(int *pBlock_colors_y, const color_rgba &base_color5, uint inten_table)
+		{
+			color_rgba b(base_color5);
+
+			b.r = (b.r << 3) | (b.r >> 2);
+			b.g = (b.g << 3) | (b.g >> 2);
+			b.b = (b.b << 3) | (b.b >> 2);
+
+			// Hmm - This leads to a tiny amount of extra artifacts, but seems worth it for faster PVRTC transcoding.
+#if 0
+			const int* pInten_table = g_etc1_inten_tables[inten_table];
+			pBlock_colors_y[0] = clamp255(b.r + pInten_table[0]) + clamp255(b.g + pInten_table[0]) + clamp255(b.b + pInten_table[0]);
+			pBlock_colors_y[1] = clamp255(b.r + pInten_table[1]) + clamp255(b.g + pInten_table[1]) + clamp255(b.b + pInten_table[1]);
+			pBlock_colors_y[2] = clamp255(b.r + pInten_table[2]) + clamp255(b.g + pInten_table[2]) + clamp255(b.b + pInten_table[2]);
+			pBlock_colors_y[3] = clamp255(b.r + pInten_table[3]) + clamp255(b.g + pInten_table[3]) + clamp255(b.b + pInten_table[3]);
+#else
+			const int* pInten_table3 = g_etc1_inten_tables3[inten_table];
+			int x = b.r + b.g + b.b;
+			pBlock_colors_y[0] = x + pInten_table3[0];
+			pBlock_colors_y[1] = x + pInten_table3[1];
+			pBlock_colors_y[2] = x + pInten_table3[2];
+			pBlock_colors_y[3] = x + pInten_table3[3];
+#endif
+		}
+
+		static void get_block_colors5_bounds(color_rgba *pBlock_colors, const color_rgba &base_color5, uint inten_table, uint l = 0, uint h = 3)
+		{
+			color_rgba b(base_color5);
+
+			b.r = (b.r << 3) | (b.r >> 2);
+			b.g = (b.g << 3) | (b.g >> 2);
+			b.b = (b.b << 3) | (b.b >> 2);
+
+			const int* pInten_table = g_etc1_inten_tables[inten_table];
+
+			pBlock_colors[0].set(clamp255(b.r + pInten_table[l]), clamp255(b.g + pInten_table[l]), clamp255(b.b + pInten_table[l]), 255);
+			pBlock_colors[1].set(clamp255(b.r + pInten_table[h]), clamp255(b.g + pInten_table[h]), clamp255(b.b + pInten_table[h]), 255);
+		}
+	};
+		
+	static const uint8 g_etc1_x_selector_unpack[4][256] =
+	{
+		{
+			0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3,
+			0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3,
+			0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3,
+			0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3,
+			0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3,
+			0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3,
+			0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3,
+			0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3,
+		},
+		{
+			0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1,
+			2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3,
+			0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1,
+			2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3,
+			0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1,
+			2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3,
+			0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1,
+			2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3, 2, 2, 3, 3,
+		},
+
+		{
+			0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1,
+			0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1,
+			2, 2, 2, 2, 3, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3,
+			2, 2, 2, 2, 3, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3,
+			0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1,
+			0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1,
+			2, 2, 2, 2, 3, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3,
+			2, 2, 2, 2, 3, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3,
+		},
+
+		{
+			0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+			0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+			0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+			0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+			2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
+			2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
+			2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
+			2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
+		}
+	};
+		
+	static dxt_selector_range g_etc1_to_dxt1_selector_ranges[] =
+	{
+		{ 0, 3 },
+
+		{ 1, 3 },
+		{ 0, 2 },
+
+		{ 1, 2 },
+
+		{ 2, 3 },
+		{ 0, 1 },
+	};
+
+	const uint NUM_ETC1_TO_DXT1_SELECTOR_RANGES = sizeof(g_etc1_to_dxt1_selector_ranges) / sizeof(g_etc1_to_dxt1_selector_ranges[0]);
+
+	static uint g_etc1_to_dxt1_selector_range_index[4][4];
+
+	const uint NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS = 10;
+	static const uint8 g_etc1_to_dxt1_selector_mappings[NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS][4] =
+	{
+		{ 0, 0, 1, 1 },
+		{ 0, 0, 1, 2 },
+		{ 0, 0, 1, 3 },
+		{ 0, 0, 2, 3 },
+		{ 0, 1, 1, 1 },
+		{ 0, 1, 2, 2 },
+		{ 0, 1, 2, 3 },
+		{ 0, 2, 3, 3 },
+		{ 1, 2, 2, 2 },
+		{ 1, 2, 3, 3 },
+	};
+
+	static uint8 g_etc1_to_dxt1_selector_mappings1[NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS][4];
+	static uint8 g_etc1_to_dxt1_selector_mappings2[NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS][4];
+
+	static const etc1_to_dxt1_56_solution g_etc1_to_dxt_6[32 * 8 * NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS * NUM_ETC1_TO_DXT1_SELECTOR_RANGES] = {
+#include "basis_decoder_tables_dxt1_6.inc"
+	};
+
+	static const etc1_to_dxt1_56_solution g_etc1_to_dxt_5[32 * 8 * NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS * NUM_ETC1_TO_DXT1_SELECTOR_RANGES] = {
+#include "basis_decoder_tables_dxt1_5.inc"
+	};
+
+	static uint8 g_Expand5[32];
+	static uint8 g_Expand6[64];
+	static uint8 g_OMatch5[256][2];
+	static uint8 g_OMatch6[256][2];
+
+	static void PrepareOptTable4(uint8 *Table, const uint8 *expand, int size)
+	{
+		for (int i = 0; i < 256; i++)
+		{
+			int bestErr = 256;
+
+			for (int min = 0; min < size; min++)
+			{
+				for (int max = 0; max < size; max++)
+				{
+					int mine = expand[min];
+					int maxe = expand[max];
+					//int err = abs(maxe + Mul8Bit(mine-maxe,0x55) - i);
+					int err = abs(((maxe * 2 + mine) / 3) - i);
+					err += ((abs(maxe - mine) * 8) >> 8); // approx. .03f
+
+					if (err < bestErr)
+					{
+						Table[i * 2 + 0] = static_cast<uint8>(max);
+						Table[i * 2 + 1] = static_cast<uint8>(min);
+						bestErr = err;
+					}
+				}
+			}
+		}
+	}
+
+#if CRND_SUPPORT_ETC1S_TO_DXT1
+	static void convert_etc1_to_dxt1(dxt1_block *pDst_block, const decoder_etc_block *pSrc_block) //, const selector *pSelector)
+	{
+#if !CRND_WRITE_NEW_DXT1_TABLES
+		//const uint low_selector = pSelector->m_lo_selector;
+		//const uint high_selector = pSelector->m_hi_selector;
+
+		// TODO: Precompute the endpoint's low_selector/high_selector this while unpacking selector palettes (not every block)!
+		uint selector_hist[4] = { 0, 0, 0, 0 };
+
+#define DO_X(x) { \
+		const uint byte_ofs = 7 - (((x) * 4) >> 3); \
+		const uint lsb_bits = pSrc_block->m_bytes[byte_ofs] >> (((x) & 1) * 4); \
+		const uint msb_bits = pSrc_block->m_bytes[byte_ofs - 2] >> (((x) & 1) * 4); \
+		const uint lookup = (lsb_bits & 0xF)| ((msb_bits & 0xF) << 4); \
+		selector_hist[g_etc1_x_selector_unpack[0][lookup]]++; \
+		selector_hist[g_etc1_x_selector_unpack[1][lookup]]++; \
+		selector_hist[g_etc1_x_selector_unpack[2][lookup]]++; \
+		selector_hist[g_etc1_x_selector_unpack[3][lookup]]++; \
+		}
+		DO_X(0)
+		DO_X(1)
+		DO_X(2)
+		DO_X(3)
+#undef DO_X
+
+		uint low_selector = 3;
+		uint high_selector = 0;
+
+		for (uint j = 0; j < 4; j++)
+		{
+			static const uint8 s_etc1_to_selector_index[cETC1SelectorValues] = { 2, 3, 1, 0 };
+			if (selector_hist[j])
+			{
+				int i = s_etc1_to_selector_index[j];
+				if (i < low_selector) low_selector = i;
+				if (i > high_selector) high_selector = i;
+			}
+		}
+
+		const color_rgba base_color(pSrc_block->get_base5_color_unscaled());
+		const uint inten_table = pSrc_block->get_inten_table(0);
+
+		if (low_selector == high_selector)
+		{
+			color_rgba block_colors[4];
+
+			decoder_etc_block::get_block_colors5(block_colors, base_color, inten_table);
+
+			const uint r = block_colors[low_selector].r;
+			const uint g = block_colors[low_selector].g;
+			const uint b = block_colors[low_selector].b;
+
+			uint mask = 0xAA;
+			uint max16 = (g_OMatch5[r][0] << 11) | (g_OMatch6[g][0] << 5) | g_OMatch5[b][0];
+			uint min16 = (g_OMatch5[r][1] << 11) | (g_OMatch6[g][1] << 5) | g_OMatch5[b][1];
+
+			if (max16 < min16)
+			{
+				std::swap(max16, min16);
+				mask ^= 0x55;
+			}
+
+			pDst_block->set_low_color(static_cast<uint16>(max16));
+			pDst_block->set_high_color(static_cast<uint16>(min16));
+			pDst_block->m_selectors[0] = static_cast<uint8>(mask);
+			pDst_block->m_selectors[1] = static_cast<uint8>(mask);
+			pDst_block->m_selectors[2] = static_cast<uint8>(mask);
+			pDst_block->m_selectors[3] = static_cast<uint8>(mask);
+			return;
+		}
+
+		const uint selector_range_table = g_etc1_to_dxt1_selector_range_index[low_selector][high_selector];
+
+		//[32][8][RANGES][MAPPING]
+		const etc1_to_dxt1_56_solution *pTable_r = &g_etc1_to_dxt_5[(inten_table * 32 + base_color.r) * (NUM_ETC1_TO_DXT1_SELECTOR_RANGES * NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS) + selector_range_table * NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS];
+		const etc1_to_dxt1_56_solution *pTable_g = &g_etc1_to_dxt_6[(inten_table * 32 + base_color.g) * (NUM_ETC1_TO_DXT1_SELECTOR_RANGES * NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS) + selector_range_table * NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS];
+		const etc1_to_dxt1_56_solution *pTable_b = &g_etc1_to_dxt_5[(inten_table * 32 + base_color.b) * (NUM_ETC1_TO_DXT1_SELECTOR_RANGES * NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS) + selector_range_table * NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS];
+
+		uint best_err = UINT_MAX;
+		uint best_mapping = 0;
+
+		CRND_ASSERT(NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS == 10);
+#define DO_ITER(m) { uint total_err = pTable_r[m].m_err + pTable_g[m].m_err + pTable_b[m].m_err; if (total_err < best_err) { best_err = total_err; best_mapping = m; } }
+		DO_ITER(0); DO_ITER(1); DO_ITER(2); DO_ITER(3); DO_ITER(4);
+		DO_ITER(5); DO_ITER(6); DO_ITER(7); DO_ITER(8); DO_ITER(9);
+#undef DO_ITER
+
+		uint l = dxt1_block::pack_unscaled_color(pTable_r[best_mapping].m_lo, pTable_g[best_mapping].m_lo, pTable_b[best_mapping].m_lo);
+		uint h = dxt1_block::pack_unscaled_color(pTable_r[best_mapping].m_hi, pTable_g[best_mapping].m_hi, pTable_b[best_mapping].m_hi);
+
+		const uint8 *pSelectors_xlat = &g_etc1_to_dxt1_selector_mappings1[best_mapping][0];
+
+		if (l < h)
+		{
+			std::swap(l, h);
+			pSelectors_xlat = &g_etc1_to_dxt1_selector_mappings2[best_mapping][0];
+		}
+
+		pDst_block->set_low_color(static_cast<uint16>(l));
+		pDst_block->set_high_color(static_cast<uint16>(h));
+
+		if (l == h)
+		{
+			pDst_block->m_selectors[0] = 0;
+			pDst_block->m_selectors[1] = 0;
+			pDst_block->m_selectors[2] = 0;
+			pDst_block->m_selectors[3] = 0;
+
+			return;
+		}
+
+		const uint sel_bits0 = pSrc_block->m_bytes[7];
+		const uint sel_bits1 = pSrc_block->m_bytes[6];
+		const uint sel_bits2 = pSrc_block->m_bytes[5];
+		const uint sel_bits3 = pSrc_block->m_bytes[4];
+
+		// y coords
+		// 4 3210 3210 MSB
+		// 5 3210 3210 MSB
+		// 6 3210 3210 LSB
+		// 7 3210 3210 LSB
+
+		// x coords
+		// 4 3333 2222 MSB
+		// 5 1111 0000 MSB
+		// 6 3333 2222 LSB
+		// 7 1111 0000 LSB
+
+		uint dxt1_sels0 = 0, dxt1_sels1 = 0, dxt1_sels2 = 0, dxt1_sels3 = 0;
+
+#if 0
+
+#define DO_X(x) { \
+		const uint byte_ofs = 7 - (((x) * 4) >> 3); \
+		uint lsb_bits = pSrc_block->m_bytes[byte_ofs] >> (((x) & 1) * 4); \
+		uint msb_bits = pSrc_block->m_bytes[byte_ofs - 2] >> (((x) & 1) * 4); \
+		uint x_shift = (x) * 2; \
+		dxt1_sels0 |= (pSelectors_xlat[(lsb_bits & 1) | ((msb_bits & 1) << 1)] << x_shift); \
+		dxt1_sels1 |= (pSelectors_xlat[((lsb_bits >> 1) & 1) | (((msb_bits >> 1) & 1) << 1)] << x_shift); \
+		dxt1_sels2 |= (pSelectors_xlat[((lsb_bits >> 2) & 1) | (((msb_bits >> 2) & 1) << 1)] << x_shift); \
+		dxt1_sels3 |= (pSelectors_xlat[((lsb_bits >> 3) & 1) | (((msb_bits >> 3) & 1) << 1)] << x_shift); }
+
+		DO_X(0);
+		DO_X(1);
+		DO_X(2);
+		DO_X(3);
+#undef DO_X
+
+#else
+
+#define DO_X(x) { \
+		const uint byte_ofs = 7 - (((x) * 4) >> 3); \
+		const uint lsb_bits = pSrc_block->m_bytes[byte_ofs] >> (((x) & 1) * 4); \
+		const uint msb_bits = pSrc_block->m_bytes[byte_ofs - 2] >> (((x) & 1) * 4); \
+		const uint lookup = (lsb_bits & 0xF)| ((msb_bits & 0xF) << 4); \
+		const uint x_shift = (x) * 2; \
+		dxt1_sels0 |= (pSelectors_xlat[g_etc1_x_selector_unpack[0][lookup]] << x_shift); \
+		dxt1_sels1 |= (pSelectors_xlat[g_etc1_x_selector_unpack[1][lookup]] << x_shift); \
+		dxt1_sels2 |= (pSelectors_xlat[g_etc1_x_selector_unpack[2][lookup]] << x_shift); \
+		dxt1_sels3 |= (pSelectors_xlat[g_etc1_x_selector_unpack[3][lookup]] << x_shift); }
+
+		DO_X(0);
+		DO_X(1);
+		DO_X(2);
+		DO_X(3);
+#undef DO_X
+
+#endif
+
+		pDst_block->m_selectors[0] = (uint8)dxt1_sels0;
+		pDst_block->m_selectors[1] = (uint8)dxt1_sels1;
+		pDst_block->m_selectors[2] = (uint8)dxt1_sels2;
+		pDst_block->m_selectors[3] = (uint8)dxt1_sels3;
+#endif
+	}
+#endif
+#endif
+
 class crn_unpacker {
  public:
   inline crn_unpacker()
@@ -2972,7 +3857,7 @@ class crn_unpacker {
 
   bool unpack_level(
       void** pDst, uint32 dst_size_in_bytes, uint32 row_pitch_in_bytes,
-      uint32 level_index) {
+      uint32 level_index, transcode_format output_format) {
     uint32 cur_level_ofs = m_pHeader->m_level_ofs[level_index];
 
     uint32 next_level_ofs = m_data_size;
@@ -2981,13 +3866,13 @@ class crn_unpacker {
 
     CRND_ASSERT(next_level_ofs > cur_level_ofs);
 
-    return unpack_level(m_pData + cur_level_ofs, next_level_ofs - cur_level_ofs, pDst, dst_size_in_bytes, row_pitch_in_bytes, level_index);
+    return unpack_level(m_pData + cur_level_ofs, next_level_ofs - cur_level_ofs, pDst, dst_size_in_bytes, row_pitch_in_bytes, level_index, output_format);
   }
 
   bool unpack_level(
       const void* pSrc, uint32 src_size_in_bytes,
       void** pDst, uint32 dst_size_in_bytes, uint32 row_pitch_in_bytes,
-      uint32 level_index) {
+      uint32 level_index, transcode_format output_format) {
 
 #ifdef CRND_BUILD_DEBUG
     for (uint32 f = 0; f < m_pHeader->m_faces; f++)
@@ -3016,7 +3901,7 @@ class crn_unpacker {
     switch (m_pHeader->m_format) {
       case cCRNFmtDXT1:
       case cCRNFmtETC1S:
-        status = unpack_dxt1((uint8**)pDst, row_pitch_in_bytes, blocks_x, blocks_y);
+        status = unpack_dxt1((uint8**)pDst, row_pitch_in_bytes, blocks_x, blocks_y, output_format);
         break;
       case cCRNFmtDXT5:
       case cCRNFmtDXT5_CCxY:
@@ -3333,7 +4218,7 @@ class crn_unpacker {
     x = (x & msk) | (v & ~msk);
   }
 
-  bool unpack_dxt1(uint8** pDst, uint32 output_pitch_in_bytes, uint32 output_width, uint32 output_height) {
+  bool unpack_dxt1(uint8** pDst, uint32 output_pitch_in_bytes, uint32 output_width, uint32 output_height, transcode_format output_format) {
     const uint32 num_color_endpoints = m_color_endpoints.size();
     const uint32 width = output_width + 1 & ~1;
     const uint32 height = output_height + 1 & ~1;
@@ -3374,9 +4259,34 @@ class crn_unpacker {
             color_endpoint_index = buffer.color_endpoint_index;
           }
           uint32 color_selector_index = m_codec.decode(m_selector_delta_dm[0]);
+
           if (visible) {
-            pData[0] = m_color_endpoints[color_endpoint_index];
-            pData[1] = m_color_selectors[color_selector_index];
+            
+			switch (output_format)
+			{
+				case cTFUnchanged:
+				{
+					pData[0] = m_color_endpoints[color_endpoint_index];
+					pData[1] = m_color_selectors[color_selector_index];
+
+					break;
+				}
+				case cTFDXT1:
+				{
+					decoder_etc_block blk;
+					blk.m_uint32[0] = m_color_endpoints[color_endpoint_index];
+					blk.m_uint32[1] = m_color_selectors[color_selector_index];
+										
+					convert_etc1_to_dxt1(reinterpret_cast<dxt1_block *>(pData), &blk);
+
+					break;
+				}
+				default:
+				{
+					CRND_ASSERT(0);
+					break;
+				}
+			}
           }
         }
       }
@@ -3747,7 +4657,7 @@ bool crnd_get_data(crnd_unpack_context pContext, const void** ppData, uint32* pD
 bool crnd_unpack_level(
     crnd_unpack_context pContext,
     void** pDst, uint32 dst_size_in_bytes, uint32 row_pitch_in_bytes,
-    uint32 level_index) {
+    uint32 level_index, transcode_format output_format) {
   if ((!pContext) || (!pDst) || (dst_size_in_bytes < 8U) || (level_index >= cCRNMaxLevels))
     return false;
 
@@ -3756,14 +4666,14 @@ bool crnd_unpack_level(
   if (!pUnpacker->is_valid())
     return false;
 
-  return pUnpacker->unpack_level(pDst, dst_size_in_bytes, row_pitch_in_bytes, level_index);
+  return pUnpacker->unpack_level(pDst, dst_size_in_bytes, row_pitch_in_bytes, level_index, output_format);
 }
 
 bool crnd_unpack_level_segmented(
     crnd_unpack_context pContext,
     const void* pSrc, uint32 src_size_in_bytes,
     void** pDst, uint32 dst_size_in_bytes, uint32 row_pitch_in_bytes,
-    uint32 level_index) {
+    uint32 level_index, transcode_format output_format = cTFUnchanged) {
   if ((!pContext) || (!pSrc) || (!pDst) || (dst_size_in_bytes < 8U) || (level_index >= cCRNMaxLevels))
     return false;
 
@@ -3772,7 +4682,7 @@ bool crnd_unpack_level_segmented(
   if (!pUnpacker->is_valid())
     return false;
 
-  return pUnpacker->unpack_level(pSrc, src_size_in_bytes, pDst, dst_size_in_bytes, row_pitch_in_bytes, level_index);
+  return pUnpacker->unpack_level(pSrc, src_size_in_bytes, pDst, dst_size_in_bytes, row_pitch_in_bytes, level_index, output_format);
 }
 
 bool crnd_unpack_end(crnd_unpack_context pContext) {
@@ -3787,6 +4697,195 @@ bool crnd_unpack_end(crnd_unpack_context pContext) {
   crnd_delete(pUnpacker);
 
   return true;
+}
+
+#if CRND_WRITE_NEW_DXT1_TABLES
+static void create_etc1_to_dxt1_5_conversion_table()
+{
+	FILE *pFile = fopen("basis_decoder_tables_dxt1_5.inc", "w");
+
+	uint n = 0;
+
+	for (int inten = 0; inten < 8; inten++)
+	{
+		for (uint g = 0; g < 32; g++)
+		{
+			color_rgba block_colors[4];
+			decoder_etc_block::get_diff_subblock_colors(block_colors, decoder_etc_block::pack_color5(color_rgba(g, g, g, 255), false), inten);
+
+			for (uint sr = 0; sr < NUM_ETC1_TO_DXT1_SELECTOR_RANGES; sr++)
+			{
+				const uint low_selector = g_etc1_to_dxt1_selector_ranges[sr].m_low;
+				const uint high_selector = g_etc1_to_dxt1_selector_ranges[sr].m_high;
+
+				for (uint m = 0; m < NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS; m++)
+				{
+					uint best_lo = 0;
+					uint best_hi = 0;
+					uint64 best_err = UINT64_MAX;
+
+					for (uint hi = 0; hi <= 31; hi++)
+					{
+						for (uint lo = 0; lo <= 31; lo++)
+						{
+							uint colors[4];
+
+							colors[0] = (lo << 3) | (lo >> 2);
+							colors[3] = (hi << 3) | (hi >> 2);
+
+							colors[1] = (colors[0] * 2 + colors[3]) / 3;
+							colors[2] = (colors[3] * 2 + colors[0]) / 3;
+
+							uint64 total_err = 0;
+
+							for (uint s = low_selector; s <= high_selector; s++)
+							{
+								int err = block_colors[s].g - colors[g_etc1_to_dxt1_selector_mappings[m][s]];
+
+								total_err += err*err;
+							}
+
+							if (total_err < best_err)
+							{
+								best_err = total_err;
+								best_lo = lo;
+								best_hi = hi;
+							}
+						}
+					}
+
+					CRND_ASSERT(best_err <= 0xFFFF);
+
+					//table[g + inten * 32].m_solutions[sr][m].m_lo = static_cast<uint8>(best_lo);
+					//table[g + inten * 32].m_solutions[sr][m].m_hi = static_cast<uint8>(best_hi);
+					//table[g + inten * 32].m_solutions[sr][m].m_err = static_cast<uint16>(best_err);
+
+					fprintf(pFile, "{%u,%u,%u},", best_lo, best_hi, best_err);
+					n++;
+					if ((n & 31) == 31)
+						fprintf(pFile, "\n");
+				} // m
+			} // sr
+		} // g
+	} // inten
+
+	fclose(pFile);
+}
+
+static void create_etc1_to_dxt1_6_conversion_table()
+{
+	FILE *pFile = fopen("basis_decoder_tables_dxt1_6.inc", "w");
+
+	uint n = 0;
+
+	for (int inten = 0; inten < 8; inten++)
+	{
+		for (uint g = 0; g < 32; g++)
+		{
+			color_rgba block_colors[4];
+			decoder_etc_block::get_diff_subblock_colors(block_colors, decoder_etc_block::pack_color5(color_rgba(g, g, g, 255), false), inten);
+
+			for (uint sr = 0; sr < NUM_ETC1_TO_DXT1_SELECTOR_RANGES; sr++)
+			{
+				const uint low_selector = g_etc1_to_dxt1_selector_ranges[sr].m_low;
+				const uint high_selector = g_etc1_to_dxt1_selector_ranges[sr].m_high;
+
+				for (uint m = 0; m < NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS; m++)
+				{
+					uint best_lo = 0;
+					uint best_hi = 0;
+					uint64 best_err = UINT64_MAX;
+
+					for (uint hi = 0; hi <= 63; hi++)
+					{
+						for (uint lo = 0; lo <= 63; lo++)
+						{
+							uint colors[4];
+
+							colors[0] = (lo << 2) | (lo >> 4);
+							colors[3] = (hi << 2) | (hi >> 4);
+
+							colors[1] = (colors[0] * 2 + colors[3]) / 3;
+							colors[2] = (colors[3] * 2 + colors[0]) / 3;
+
+							uint64 total_err = 0;
+
+							for (uint s = low_selector; s <= high_selector; s++)
+							{
+								int err = block_colors[s].g - colors[g_etc1_to_dxt1_selector_mappings[m][s]];
+
+								total_err += err*err;
+							}
+
+							if (total_err < best_err)
+							{
+								best_err = total_err;
+								best_lo = lo;
+								best_hi = hi;
+							}
+						}
+					}
+
+					CRND_ASSERT(best_err <= 0xFFFF);
+
+					//table[g + inten * 32].m_solutions[sr][m].m_lo = static_cast<uint8>(best_lo);
+					//table[g + inten * 32].m_solutions[sr][m].m_hi = static_cast<uint8>(best_hi);
+					//table[g + inten * 32].m_solutions[sr][m].m_err = static_cast<uint16>(best_err);
+
+					fprintf(pFile, "{%u,%u,%u},", best_lo, best_hi, best_err);
+					n++;
+					if ((n & 31) == 31)
+						fprintf(pFile, "\n");
+
+				} // m
+			} // sr
+		} // g
+	} // inten
+
+	fclose(pFile);
+}
+#endif
+
+void crnd_global_init()
+{
+#if CRND_SUPPORT_ETC1S_TO_DXT1
+	for (int i = 0; i < 32; i++)
+		g_Expand5[i] = static_cast<uint8>((i << 3) | (i >> 2));
+
+	for (int i = 0; i < 64; i++)
+		g_Expand6[i] = static_cast<uint8>((i << 2) | (i >> 4));
+
+	PrepareOptTable4(&g_OMatch5[0][0], g_Expand5, 32);
+	PrepareOptTable4(&g_OMatch6[0][0], g_Expand6, 64);
+
+	for (uint i = 0; i < NUM_ETC1_TO_DXT1_SELECTOR_RANGES; i++)
+	{
+		uint l = g_etc1_to_dxt1_selector_ranges[i].m_low;
+		uint h = g_etc1_to_dxt1_selector_ranges[i].m_high;
+		g_etc1_to_dxt1_selector_range_index[l][h] = i;
+	}
+
+	for (uint sm = 0; sm < NUM_ETC1_TO_DXT1_SELECTOR_MAPPINGS; sm++)
+	{
+		// iterate over the raw ETC1 selectors (which aren't linearize)
+		for (uint j = 0; j < 4; j++)
+		{
+			static const uint8 s_etc1_to_selector_index[cETC1SelectorValues] = { 2, 3, 1, 0 };
+			static const uint8 s_etc1_to_dxt1_xlat[4] = { 0, 2, 3, 1 };
+			static const uint8 s_etc1_to_dxt1_inverted_xlat[4] = { 1, 3, 2, 0 };
+
+			uint etc1_selector = s_etc1_to_selector_index[j];
+
+			uint dxt1_selector = g_etc1_to_dxt1_selector_mappings[sm][etc1_selector];
+
+			uint raw_dxt1_selector = s_etc1_to_dxt1_xlat[dxt1_selector];
+			uint raw_dxt1_selector_inv = s_etc1_to_dxt1_inverted_xlat[dxt1_selector];
+
+			g_etc1_to_dxt1_selector_mappings1[sm][j] = (uint8)raw_dxt1_selector;
+			g_etc1_to_dxt1_selector_mappings2[sm][j] = (uint8)raw_dxt1_selector_inv;
+		}
+	}
+#endif
 }
 
 }  // namespace crnd
