@@ -1174,7 +1174,7 @@ static int main_internal(int argc, char* argv[]) {
 	if (crnd::crnd_get_level_info(&crn_bytes[0], crn_file_size, 0, &level_info))
 	{
 		mipmapped_texture mt;
-		mt.init(level_info.m_width, level_info.m_height, 1, 1, PIXEL_FMT_DXT1, "", cDefaultOrientationFlags);
+		mt.init(level_info.m_width, level_info.m_height, 1, 1, PIXEL_FMT_DXT5A, "", cDefaultOrientationFlags);
 
 		crnd::crnd_unpack_context pContext = crnd::crnd_unpack_begin(&crn_bytes[0], crn_file_size);
 		if (pContext)
@@ -1185,11 +1185,10 @@ static int main_internal(int argc, char* argv[]) {
 				dst_ptrs, 
 				mt.get_level(0, 0)->get_dxt_image()->get_size_in_bytes(), 
 				mt.get_level(0, 0)->get_dxt_image()->get_row_pitch_in_bytes(), 
-				0, crnd::cTFDXT1);
+				0, crnd::cTFDXT5A);
 
 			crnd::crnd_unpack_end(pContext);
-
-			
+						
 			cfile_stream output_file;
 			output_file.open("output.dds", cDataStreamWritable | cDataStreamSeekable);
 						
