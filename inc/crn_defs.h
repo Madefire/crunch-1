@@ -166,7 +166,7 @@ bool crnd_get_data(crnd_unpack_context pContext, const void** ppData, uint32* pD
 bool crnd_unpack_level(
     crnd_unpack_context pContext,
     void** ppDst, uint32 dst_size_in_bytes, uint32 row_pitch_in_bytes,
-    uint32 level_index, transcode_format output_format = cTFUnchanged);
+    uint32 level_index, transcode_format output_format = cTFUnchanged, uint32 block_pitch_in_dwords = 2);
 
 // crnd_unpack_level_segmented() - Unpacks the specified mipmap level from a "segmented" CRN file.
 // See the crnd_create_segmented_file() API below.
@@ -175,7 +175,7 @@ bool crnd_unpack_level_segmented(
     crnd_unpack_context pContext,
     const void* pSrc, uint32 src_size_in_bytes,
     void** ppDst, uint32 dst_size_in_bytes, uint32 row_pitch_in_bytes,
-    uint32 level_index);
+    uint32 level_index, transcode_format output_format = cTFUnchanged, uint32 block_pitch_in_dwords = 2);
 
 // crnd_unpack_end() - Frees the decompress tables and unpacked palettes associated with the specified unpack context.
 // Returns false if the context is NULL, or if it points to an invalid context.

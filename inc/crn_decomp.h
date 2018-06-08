@@ -2943,6 +2943,7 @@ uint32 dxt5_block::get_block_values(uint32* pDst, uint32 l, uint32 h) {
 namespace crnd {
 
 #define CRND_SUPPORT_ETC1S_TO_DXT1 1
+#define CRND_SUPPORT_ETC1S_TO_DXT5A 1
 	
 #if CRND_SUPPORT_ETC1S_TO_DXT1
 		
@@ -3816,6 +3817,512 @@ namespace crnd {
 #endif
 	}
 #endif
+	
+#endif // CRND_SUPPORT_ETC1S_TO_DXT1
+
+#if CRND_SUPPORT_ETC1S_TO_DXT5A
+	static dxt_selector_range s_dxt5a_selector_ranges[] =
+	{
+		{ 0, 3 },
+
+		{ 1, 3 },
+		{ 0, 2 },
+
+		{ 1, 2 },
+	};
+
+	const uint NUM_DXT5A_SELECTOR_RANGES = sizeof(s_dxt5a_selector_ranges) / sizeof(s_dxt5a_selector_ranges[0]);
+
+	struct etc1_g_to_dxt5a_conversion
+	{
+		uint8 m_lo, m_hi;
+		uint16 m_trans;
+	};
+
+	static etc1_g_to_dxt5a_conversion g_etc1_g_to_dxt5a[32 * 8][NUM_DXT5A_SELECTOR_RANGES] =
+	{
+		{ { 8, 0, 393 },{ 8, 0, 392 },{ 2, 0, 9 },{ 2, 0, 8 }, },
+		{ { 6, 16, 710 },{ 16, 6, 328 },{ 0, 10, 96 },{ 10, 6, 8 }, },
+		{ { 28, 5, 1327 },{ 24, 14, 328 },{ 8, 18, 96 },{ 18, 14, 8 }, },
+		{ { 36, 13, 1327 },{ 32, 22, 328 },{ 16, 26, 96 },{ 26, 22, 8 }, },
+		{ { 45, 22, 1327 },{ 41, 31, 328 },{ 25, 35, 96 },{ 35, 31, 8 }, },
+		{ { 53, 30, 1327 },{ 49, 39, 328 },{ 33, 43, 96 },{ 43, 39, 8 }, },
+		{ { 61, 38, 1327 },{ 57, 47, 328 },{ 41, 51, 96 },{ 51, 47, 8 }, },
+		{ { 69, 46, 1327 },{ 65, 55, 328 },{ 49, 59, 96 },{ 59, 55, 8 }, },
+		{ { 78, 55, 1327 },{ 74, 64, 328 },{ 58, 68, 96 },{ 68, 64, 8 }, },
+		{ { 86, 63, 1327 },{ 82, 72, 328 },{ 66, 76, 96 },{ 76, 72, 8 }, },
+		{ { 94, 71, 1327 },{ 90, 80, 328 },{ 74, 84, 96 },{ 84, 80, 8 }, },
+		{ { 102, 79, 1327 },{ 98, 88, 328 },{ 82, 92, 96 },{ 92, 88, 8 }, },
+		{ { 111, 88, 1327 },{ 107, 97, 328 },{ 91, 101, 96 },{ 101, 97, 8 }, },
+		{ { 119, 96, 1327 },{ 115, 105, 328 },{ 99, 109, 96 },{ 109, 105, 8 }, },
+		{ { 127, 104, 1327 },{ 123, 113, 328 },{ 107, 117, 96 },{ 117, 113, 8 }, },
+		{ { 135, 112, 1327 },{ 131, 121, 328 },{ 115, 125, 96 },{ 125, 121, 8 }, },
+		{ { 144, 121, 1327 },{ 140, 130, 328 },{ 124, 134, 96 },{ 134, 130, 8 }, },
+		{ { 152, 129, 1327 },{ 148, 138, 328 },{ 132, 142, 96 },{ 142, 138, 8 }, },
+		{ { 160, 137, 1327 },{ 156, 146, 328 },{ 140, 150, 96 },{ 150, 146, 8 }, },
+		{ { 168, 145, 1327 },{ 164, 154, 328 },{ 148, 158, 96 },{ 158, 154, 8 }, },
+		{ { 177, 154, 1327 },{ 173, 163, 328 },{ 157, 167, 96 },{ 167, 163, 8 }, },
+		{ { 185, 162, 1327 },{ 181, 171, 328 },{ 165, 175, 96 },{ 175, 171, 8 }, },
+		{ { 193, 170, 1327 },{ 189, 179, 328 },{ 173, 183, 96 },{ 183, 179, 8 }, },
+		{ { 201, 178, 1327 },{ 197, 187, 328 },{ 181, 191, 96 },{ 191, 187, 8 }, },
+		{ { 210, 187, 1327 },{ 206, 196, 328 },{ 190, 200, 96 },{ 200, 196, 8 }, },
+		{ { 218, 195, 1327 },{ 214, 204, 328 },{ 198, 208, 96 },{ 208, 204, 8 }, },
+		{ { 226, 203, 1327 },{ 222, 212, 328 },{ 206, 216, 96 },{ 216, 212, 8 }, },
+		{ { 234, 211, 1327 },{ 230, 220, 328 },{ 214, 224, 96 },{ 224, 220, 8 }, },
+		{ { 243, 220, 1327 },{ 239, 229, 328 },{ 223, 233, 96 },{ 233, 229, 8 }, },
+		{ { 251, 228, 1327 },{ 247, 237, 328 },{ 231, 241, 96 },{ 241, 237, 8 }, },
+		{ { 239, 249, 3680 },{ 245, 249, 3648 },{ 239, 249, 96 },{ 249, 245, 8 }, },
+		{ { 247, 253, 4040 },{ 255, 253, 8 },{ 247, 253, 456 },{ 255, 253, 8 }, },
+		{ { 5, 17, 566 },{ 5, 17, 560 },{ 5, 0, 9 },{ 5, 0, 8 }, },
+		{ { 25, 0, 313 },{ 25, 3, 328 },{ 13, 0, 49 },{ 13, 3, 8 }, },
+		{ { 39, 0, 1329 },{ 33, 11, 328 },{ 11, 21, 70 },{ 21, 11, 8 }, },
+		{ { 47, 7, 1329 },{ 41, 19, 328 },{ 29, 7, 33 },{ 29, 19, 8 }, },
+		{ { 50, 11, 239 },{ 50, 28, 328 },{ 38, 16, 33 },{ 38, 28, 8 }, },
+		{ { 92, 13, 2423 },{ 58, 36, 328 },{ 46, 24, 33 },{ 46, 36, 8 }, },
+		{ { 100, 21, 2423 },{ 66, 44, 328 },{ 54, 32, 33 },{ 54, 44, 8 }, },
+		{ { 86, 7, 1253 },{ 74, 52, 328 },{ 62, 40, 33 },{ 62, 52, 8 }, },
+		{ { 95, 16, 1253 },{ 83, 61, 328 },{ 71, 49, 33 },{ 71, 61, 8 }, },
+		{ { 103, 24, 1253 },{ 91, 69, 328 },{ 79, 57, 33 },{ 79, 69, 8 }, },
+		{ { 111, 32, 1253 },{ 99, 77, 328 },{ 87, 65, 33 },{ 87, 77, 8 }, },
+		{ { 119, 40, 1253 },{ 107, 85, 328 },{ 95, 73, 33 },{ 95, 85, 8 }, },
+		{ { 128, 49, 1253 },{ 116, 94, 328 },{ 104, 82, 33 },{ 104, 94, 8 }, },
+		{ { 136, 57, 1253 },{ 124, 102, 328 },{ 112, 90, 33 },{ 112, 102, 8 }, },
+		{ { 144, 65, 1253 },{ 132, 110, 328 },{ 120, 98, 33 },{ 120, 110, 8 }, },
+		{ { 152, 73, 1253 },{ 140, 118, 328 },{ 128, 106, 33 },{ 128, 118, 8 }, },
+		{ { 161, 82, 1253 },{ 149, 127, 328 },{ 137, 115, 33 },{ 137, 127, 8 }, },
+		{ { 169, 90, 1253 },{ 157, 135, 328 },{ 145, 123, 33 },{ 145, 135, 8 }, },
+		{ { 177, 98, 1253 },{ 165, 143, 328 },{ 153, 131, 33 },{ 153, 143, 8 }, },
+		{ { 185, 106, 1253 },{ 173, 151, 328 },{ 161, 139, 33 },{ 161, 151, 8 }, },
+		{ { 194, 115, 1253 },{ 182, 160, 328 },{ 170, 148, 33 },{ 170, 160, 8 }, },
+		{ { 202, 123, 1253 },{ 190, 168, 328 },{ 178, 156, 33 },{ 178, 168, 8 }, },
+		{ { 210, 131, 1253 },{ 198, 176, 328 },{ 186, 164, 33 },{ 186, 176, 8 }, },
+		{ { 218, 139, 1253 },{ 206, 184, 328 },{ 194, 172, 33 },{ 194, 184, 8 }, },
+		{ { 227, 148, 1253 },{ 215, 193, 328 },{ 203, 181, 33 },{ 203, 193, 8 }, },
+		{ { 235, 156, 1253 },{ 223, 201, 328 },{ 211, 189, 33 },{ 211, 201, 8 }, },
+		{ { 243, 164, 1253 },{ 231, 209, 328 },{ 219, 197, 33 },{ 219, 209, 8 }, },
+		{ { 183, 239, 867 },{ 239, 217, 328 },{ 227, 205, 33 },{ 227, 217, 8 }, },
+		{ { 254, 214, 1329 },{ 248, 226, 328 },{ 236, 214, 33 },{ 236, 226, 8 }, },
+		{ { 222, 244, 3680 },{ 234, 244, 3648 },{ 244, 222, 33 },{ 244, 234, 8 }, },
+		{ { 230, 252, 3680 },{ 242, 252, 3648 },{ 252, 230, 33 },{ 252, 242, 8 }, },
+		{ { 238, 250, 4040 },{ 255, 250, 8 },{ 238, 250, 456 },{ 255, 250, 8 }, },
+		{ { 9, 29, 566 },{ 9, 29, 560 },{ 9, 0, 9 },{ 9, 0, 8 }, },
+		{ { 17, 37, 566 },{ 17, 37, 560 },{ 17, 0, 9 },{ 17, 0, 8 }, },
+		{ { 45, 0, 313 },{ 45, 0, 312 },{ 25, 0, 49 },{ 25, 7, 8 }, },
+		{ { 14, 63, 2758 },{ 5, 53, 784 },{ 15, 33, 70 },{ 33, 15, 8 }, },
+		{ { 71, 6, 1329 },{ 72, 4, 1328 },{ 42, 4, 33 },{ 42, 24, 8 }, },
+		{ { 70, 3, 239 },{ 70, 2, 232 },{ 50, 12, 33 },{ 50, 32, 8 }, },
+		{ { 0, 98, 2842 },{ 78, 10, 232 },{ 58, 20, 33 },{ 58, 40, 8 }, },
+		{ { 97, 27, 1329 },{ 86, 18, 232 },{ 66, 28, 33 },{ 66, 48, 8 }, },
+		{ { 0, 94, 867 },{ 95, 27, 232 },{ 75, 37, 33 },{ 75, 57, 8 }, },
+		{ { 8, 102, 867 },{ 103, 35, 232 },{ 83, 45, 33 },{ 83, 65, 8 }, },
+		{ { 12, 112, 867 },{ 111, 43, 232 },{ 91, 53, 33 },{ 91, 73, 8 }, },
+		{ { 139, 2, 1253 },{ 119, 51, 232 },{ 99, 61, 33 },{ 99, 81, 8 }, },
+		{ { 148, 13, 1253 },{ 128, 60, 232 },{ 108, 70, 33 },{ 108, 90, 8 }, },
+		{ { 156, 21, 1253 },{ 136, 68, 232 },{ 116, 78, 33 },{ 116, 98, 8 }, },
+		{ { 164, 29, 1253 },{ 144, 76, 232 },{ 124, 86, 33 },{ 124, 106, 8 }, },
+		{ { 172, 37, 1253 },{ 152, 84, 232 },{ 132, 94, 33 },{ 132, 114, 8 }, },
+		{ { 181, 46, 1253 },{ 161, 93, 232 },{ 141, 103, 33 },{ 141, 123, 8 }, },
+		{ { 189, 54, 1253 },{ 169, 101, 232 },{ 149, 111, 33 },{ 149, 131, 8 }, },
+		{ { 197, 62, 1253 },{ 177, 109, 232 },{ 157, 119, 33 },{ 157, 139, 8 }, },
+		{ { 205, 70, 1253 },{ 185, 117, 232 },{ 165, 127, 33 },{ 165, 147, 8 }, },
+		{ { 214, 79, 1253 },{ 194, 126, 232 },{ 174, 136, 33 },{ 174, 156, 8 }, },
+		{ { 222, 87, 1253 },{ 202, 134, 232 },{ 182, 144, 33 },{ 182, 164, 8 }, },
+		{ { 230, 95, 1253 },{ 210, 142, 232 },{ 190, 152, 33 },{ 190, 172, 8 }, },
+		{ { 238, 103, 1253 },{ 218, 150, 232 },{ 198, 160, 33 },{ 198, 180, 8 }, },
+		{ { 247, 112, 1253 },{ 227, 159, 232 },{ 207, 169, 33 },{ 207, 189, 8 }, },
+		{ { 255, 120, 1253 },{ 235, 167, 232 },{ 215, 177, 33 },{ 215, 197, 8 }, },
+		{ { 146, 243, 867 },{ 243, 175, 232 },{ 223, 185, 33 },{ 223, 205, 8 }, },
+		{ { 184, 231, 3682 },{ 203, 251, 784 },{ 231, 193, 33 },{ 231, 213, 8 }, },
+		{ { 193, 240, 3682 },{ 222, 240, 3648 },{ 240, 202, 33 },{ 240, 222, 8 }, },
+		{ { 255, 210, 169 },{ 230, 248, 3648 },{ 248, 210, 33 },{ 248, 230, 8 }, },
+		{ { 218, 238, 4040 },{ 255, 238, 8 },{ 218, 238, 456 },{ 255, 238, 8 }, },
+		{ { 226, 246, 4040 },{ 255, 246, 8 },{ 226, 246, 456 },{ 255, 246, 8 }, },
+		{ { 13, 42, 566 },{ 13, 42, 560 },{ 13, 0, 9 },{ 13, 0, 8 }, },
+		{ { 50, 0, 329 },{ 50, 0, 328 },{ 21, 0, 9 },{ 21, 0, 8 }, },
+		{ { 29, 58, 566 },{ 67, 2, 1352 },{ 3, 29, 70 },{ 29, 3, 8 }, },
+		{ { 10, 79, 2758 },{ 76, 11, 1352 },{ 11, 37, 70 },{ 37, 11, 8 }, },
+		{ { 7, 75, 790 },{ 7, 75, 784 },{ 20, 46, 70 },{ 46, 20, 8 }, },
+		{ { 15, 83, 790 },{ 97, 1, 1328 },{ 28, 54, 70 },{ 54, 28, 8 }, },
+		{ { 101, 7, 1329 },{ 105, 9, 1328 },{ 62, 0, 39 },{ 62, 36, 8 }, },
+		{ { 99, 1, 239 },{ 99, 3, 232 },{ 1, 71, 98 },{ 70, 44, 8 }, },
+		{ { 107, 11, 239 },{ 108, 12, 232 },{ 10, 80, 98 },{ 79, 53, 8 }, },
+		{ { 115, 19, 239 },{ 116, 20, 232 },{ 18, 88, 98 },{ 87, 61, 8 }, },
+		{ { 123, 27, 239 },{ 124, 28, 232 },{ 26, 96, 98 },{ 95, 69, 8 }, },
+		{ { 131, 35, 239 },{ 132, 36, 232 },{ 34, 104, 98 },{ 103, 77, 8 }, },
+		{ { 140, 44, 239 },{ 141, 45, 232 },{ 43, 113, 98 },{ 112, 86, 8 }, },
+		{ { 148, 52, 239 },{ 149, 53, 232 },{ 51, 121, 98 },{ 120, 94, 8 }, },
+		{ { 156, 60, 239 },{ 157, 61, 232 },{ 59, 129, 98 },{ 128, 102, 8 }, },
+		{ { 164, 68, 239 },{ 165, 69, 232 },{ 67, 137, 98 },{ 136, 110, 8 }, },
+		{ { 173, 77, 239 },{ 174, 78, 232 },{ 76, 146, 98 },{ 145, 119, 8 }, },
+		{ { 181, 85, 239 },{ 182, 86, 232 },{ 84, 154, 98 },{ 153, 127, 8 }, },
+		{ { 189, 93, 239 },{ 190, 94, 232 },{ 92, 162, 98 },{ 161, 135, 8 }, },
+		{ { 197, 101, 239 },{ 198, 102, 232 },{ 100, 170, 98 },{ 169, 143, 8 }, },
+		{ { 206, 110, 239 },{ 207, 111, 232 },{ 109, 179, 98 },{ 178, 152, 8 }, },
+		{ { 214, 118, 239 },{ 215, 119, 232 },{ 117, 187, 98 },{ 186, 160, 8 }, },
+		{ { 222, 126, 239 },{ 223, 127, 232 },{ 125, 195, 98 },{ 194, 168, 8 }, },
+		{ { 230, 134, 239 },{ 231, 135, 232 },{ 133, 203, 98 },{ 202, 176, 8 }, },
+		{ { 239, 143, 239 },{ 240, 144, 232 },{ 142, 212, 98 },{ 211, 185, 8 }, },
+		{ { 247, 151, 239 },{ 180, 248, 784 },{ 150, 220, 98 },{ 219, 193, 8 }, },
+		{ { 159, 228, 3682 },{ 201, 227, 3648 },{ 158, 228, 98 },{ 227, 201, 8 }, },
+		{ { 181, 249, 3928 },{ 209, 235, 3648 },{ 166, 236, 98 },{ 235, 209, 8 }, },
+		{ { 255, 189, 169 },{ 218, 244, 3648 },{ 175, 245, 98 },{ 244, 218, 8 }, },
+		{ { 197, 226, 4040 },{ 226, 252, 3648 },{ 183, 253, 98 },{ 252, 226, 8 }, },
+		{ { 205, 234, 4040 },{ 255, 234, 8 },{ 205, 234, 456 },{ 255, 234, 8 }, },
+		{ { 213, 242, 4040 },{ 255, 242, 8 },{ 213, 242, 456 },{ 255, 242, 8 }, },
+		{ { 18, 60, 566 },{ 18, 60, 560 },{ 18, 0, 9 },{ 18, 0, 8 }, },
+		{ { 26, 68, 566 },{ 26, 68, 560 },{ 26, 0, 9 },{ 26, 0, 8 }, },
+		{ { 34, 76, 566 },{ 34, 76, 560 },{ 34, 0, 9 },{ 34, 0, 8 }, },
+		{ { 5, 104, 2758 },{ 98, 5, 1352 },{ 42, 0, 57 },{ 42, 6, 8 }, },
+		{ { 92, 0, 313 },{ 93, 1, 312 },{ 15, 51, 70 },{ 51, 15, 8 }, },
+		{ { 3, 101, 790 },{ 3, 101, 784 },{ 0, 59, 88 },{ 59, 23, 8 }, },
+		{ { 14, 107, 790 },{ 11, 109, 784 },{ 31, 67, 70 },{ 67, 31, 8 }, },
+		{ { 19, 117, 790 },{ 19, 117, 784 },{ 39, 75, 70 },{ 75, 39, 8 }, },
+		{ { 28, 126, 790 },{ 28, 126, 784 },{ 83, 5, 33 },{ 84, 48, 8 }, },
+		{ { 132, 0, 239 },{ 36, 134, 784 },{ 91, 13, 33 },{ 92, 56, 8 }, },
+		{ { 142, 4, 239 },{ 44, 142, 784 },{ 99, 21, 33 },{ 100, 64, 8 }, },
+		{ { 150, 12, 239 },{ 52, 150, 784 },{ 107, 29, 33 },{ 108, 72, 8 }, },
+		{ { 159, 21, 239 },{ 61, 159, 784 },{ 116, 38, 33 },{ 117, 81, 8 }, },
+		{ { 167, 29, 239 },{ 69, 167, 784 },{ 124, 46, 33 },{ 125, 89, 8 }, },
+		{ { 175, 37, 239 },{ 77, 175, 784 },{ 132, 54, 33 },{ 133, 97, 8 }, },
+		{ { 183, 45, 239 },{ 85, 183, 784 },{ 140, 62, 33 },{ 141, 105, 8 }, },
+		{ { 192, 54, 239 },{ 94, 192, 784 },{ 149, 71, 33 },{ 150, 114, 8 }, },
+		{ { 200, 62, 239 },{ 102, 200, 784 },{ 157, 79, 33 },{ 158, 122, 8 }, },
+		{ { 208, 70, 239 },{ 110, 208, 784 },{ 165, 87, 33 },{ 166, 130, 8 }, },
+		{ { 216, 78, 239 },{ 118, 216, 784 },{ 173, 95, 33 },{ 174, 138, 8 }, },
+		{ { 225, 87, 239 },{ 127, 225, 784 },{ 182, 104, 33 },{ 183, 147, 8 }, },
+		{ { 233, 95, 239 },{ 135, 233, 784 },{ 190, 112, 33 },{ 191, 155, 8 }, },
+		{ { 241, 103, 239 },{ 143, 241, 784 },{ 198, 120, 33 },{ 199, 163, 8 }, },
+		{ { 111, 208, 3682 },{ 151, 249, 784 },{ 206, 128, 33 },{ 207, 171, 8 }, },
+		{ { 120, 217, 3682 },{ 180, 216, 3648 },{ 215, 137, 33 },{ 216, 180, 8 }, },
+		{ { 128, 225, 3682 },{ 188, 224, 3648 },{ 223, 145, 33 },{ 224, 188, 8 }, },
+		{ { 155, 253, 3928 },{ 196, 232, 3648 },{ 231, 153, 33 },{ 232, 196, 8 }, },
+		{ { 144, 241, 3682 },{ 204, 240, 3648 },{ 239, 161, 33 },{ 240, 204, 8 }, },
+		{ { 153, 250, 3682 },{ 213, 249, 3648 },{ 248, 170, 33 },{ 249, 213, 8 }, },
+		{ { 179, 221, 4040 },{ 255, 221, 8 },{ 179, 221, 456 },{ 255, 221, 8 }, },
+		{ { 187, 229, 4040 },{ 255, 229, 8 },{ 187, 229, 456 },{ 255, 229, 8 }, },
+		{ { 195, 237, 4040 },{ 255, 237, 8 },{ 195, 237, 456 },{ 255, 237, 8 }, },
+		{ { 24, 80, 566 },{ 24, 80, 560 },{ 24, 0, 9 },{ 24, 0, 8 }, },
+		{ { 32, 88, 566 },{ 32, 88, 560 },{ 32, 0, 9 },{ 32, 0, 8 }, },
+		{ { 40, 96, 566 },{ 40, 96, 560 },{ 40, 0, 9 },{ 40, 0, 8 }, },
+		{ { 48, 104, 566 },{ 48, 104, 560 },{ 48, 0, 9 },{ 48, 0, 8 }, },
+		{ { 9, 138, 2758 },{ 130, 7, 1352 },{ 9, 57, 70 },{ 57, 9, 8 }, },
+		{ { 119, 0, 313 },{ 120, 0, 312 },{ 17, 65, 70 },{ 65, 17, 8 }, },
+		{ { 0, 128, 784 },{ 128, 6, 312 },{ 25, 73, 70 },{ 73, 25, 8 }, },
+		{ { 6, 137, 790 },{ 5, 136, 784 },{ 33, 81, 70 },{ 81, 33, 8 }, },
+		{ { 42, 171, 2758 },{ 14, 145, 784 },{ 42, 90, 70 },{ 90, 42, 8 }, },
+		{ { 50, 179, 2758 },{ 22, 153, 784 },{ 50, 98, 70 },{ 98, 50, 8 }, },
+		{ { 58, 187, 2758 },{ 30, 161, 784 },{ 58, 106, 70 },{ 106, 58, 8 }, },
+		{ { 191, 18, 1329 },{ 38, 169, 784 },{ 112, 9, 33 },{ 114, 66, 8 }, },
+		{ { 176, 0, 239 },{ 47, 178, 784 },{ 121, 18, 33 },{ 123, 75, 8 }, },
+		{ { 187, 1, 239 },{ 55, 186, 784 },{ 129, 26, 33 },{ 131, 83, 8 }, },
+		{ { 195, 10, 239 },{ 63, 194, 784 },{ 137, 34, 33 },{ 139, 91, 8 }, },
+		{ { 203, 18, 239 },{ 71, 202, 784 },{ 145, 42, 33 },{ 147, 99, 8 }, },
+		{ { 212, 27, 239 },{ 80, 211, 784 },{ 154, 51, 33 },{ 156, 108, 8 }, },
+		{ { 220, 35, 239 },{ 88, 219, 784 },{ 162, 59, 33 },{ 164, 116, 8 }, },
+		{ { 228, 43, 239 },{ 96, 227, 784 },{ 170, 67, 33 },{ 172, 124, 8 }, },
+		{ { 236, 51, 239 },{ 104, 235, 784 },{ 178, 75, 33 },{ 180, 132, 8 }, },
+		{ { 245, 60, 239 },{ 113, 244, 784 },{ 187, 84, 33 },{ 189, 141, 8 }, },
+		{ { 91, 194, 3680 },{ 149, 197, 3648 },{ 195, 92, 33 },{ 197, 149, 8 }, },
+		{ { 99, 202, 3680 },{ 157, 205, 3648 },{ 203, 100, 33 },{ 205, 157, 8 }, },
+		{ { 107, 210, 3680 },{ 165, 213, 3648 },{ 211, 108, 33 },{ 213, 165, 8 }, },
+		{ { 119, 249, 3928 },{ 174, 222, 3648 },{ 220, 117, 33 },{ 222, 174, 8 }, },
+		{ { 127, 255, 856 },{ 182, 230, 3648 },{ 228, 125, 33 },{ 230, 182, 8 }, },
+		{ { 255, 135, 169 },{ 190, 238, 3648 },{ 236, 133, 33 },{ 238, 190, 8 }, },
+		{ { 140, 243, 3680 },{ 198, 246, 3648 },{ 244, 141, 33 },{ 246, 198, 8 }, },
+		{ { 151, 207, 4040 },{ 255, 207, 8 },{ 151, 207, 456 },{ 255, 207, 8 }, },
+		{ { 159, 215, 4040 },{ 255, 215, 8 },{ 159, 215, 456 },{ 255, 215, 8 }, },
+		{ { 167, 223, 4040 },{ 255, 223, 8 },{ 167, 223, 456 },{ 255, 223, 8 }, },
+		{ { 175, 231, 4040 },{ 255, 231, 8 },{ 175, 231, 456 },{ 255, 231, 8 }, },
+		{ { 33, 106, 566 },{ 33, 106, 560 },{ 33, 0, 9 },{ 33, 0, 8 }, },
+		{ { 41, 114, 566 },{ 41, 114, 560 },{ 41, 0, 9 },{ 41, 0, 8 }, },
+		{ { 49, 122, 566 },{ 49, 122, 560 },{ 49, 0, 9 },{ 49, 0, 8 }, },
+		{ { 57, 130, 566 },{ 57, 130, 560 },{ 57, 0, 9 },{ 57, 0, 8 }, },
+		{ { 66, 139, 566 },{ 66, 139, 560 },{ 66, 0, 9 },{ 66, 0, 8 }, },
+		{ { 74, 147, 566 },{ 170, 7, 1352 },{ 8, 74, 70 },{ 74, 8, 8 }, },
+		{ { 152, 0, 313 },{ 178, 15, 1352 },{ 0, 82, 80 },{ 82, 16, 8 }, },
+		{ { 162, 0, 313 },{ 186, 23, 1352 },{ 24, 90, 70 },{ 90, 24, 8 }, },
+		{ { 0, 171, 784 },{ 195, 32, 1352 },{ 33, 99, 70 },{ 99, 33, 8 }, },
+		{ { 6, 179, 790 },{ 203, 40, 1352 },{ 41, 107, 70 },{ 107, 41, 8 }, },
+		{ { 15, 187, 790 },{ 211, 48, 1352 },{ 115, 0, 41 },{ 115, 49, 8 }, },
+		{ { 61, 199, 710 },{ 219, 56, 1352 },{ 57, 123, 70 },{ 123, 57, 8 }, },
+		{ { 70, 208, 710 },{ 228, 65, 1352 },{ 66, 132, 70 },{ 132, 66, 8 }, },
+		{ { 78, 216, 710 },{ 236, 73, 1352 },{ 74, 140, 70 },{ 140, 74, 8 }, },
+		{ { 86, 224, 710 },{ 244, 81, 1352 },{ 145, 7, 33 },{ 148, 82, 8 }, },
+		{ { 222, 8, 233 },{ 252, 89, 1352 },{ 153, 15, 33 },{ 156, 90, 8 }, },
+		{ { 235, 0, 239 },{ 241, 101, 328 },{ 166, 6, 39 },{ 165, 99, 8 }, },
+		{ { 32, 170, 3680 },{ 249, 109, 328 },{ 0, 175, 98 },{ 173, 107, 8 }, },
+		{ { 40, 178, 3680 },{ 115, 181, 3648 },{ 8, 183, 98 },{ 181, 115, 8 }, },
+		{ { 48, 186, 3680 },{ 123, 189, 3648 },{ 16, 191, 98 },{ 189, 123, 8 }, },
+		{ { 57, 195, 3680 },{ 132, 198, 3648 },{ 25, 200, 98 },{ 198, 132, 8 }, },
+		{ { 67, 243, 3928 },{ 140, 206, 3648 },{ 33, 208, 98 },{ 206, 140, 8 }, },
+		{ { 76, 251, 3928 },{ 148, 214, 3648 },{ 41, 216, 98 },{ 214, 148, 8 }, },
+		{ { 86, 255, 856 },{ 156, 222, 3648 },{ 49, 224, 98 },{ 222, 156, 8 }, },
+		{ { 255, 93, 169 },{ 165, 231, 3648 },{ 58, 233, 98 },{ 231, 165, 8 }, },
+		{ { 98, 236, 3680 },{ 173, 239, 3648 },{ 66, 241, 98 },{ 239, 173, 8 }, },
+		{ { 108, 181, 4040 },{ 181, 247, 3648 },{ 74, 249, 98 },{ 247, 181, 8 }, },
+		{ { 116, 189, 4040 },{ 255, 189, 8 },{ 116, 189, 456 },{ 255, 189, 8 }, },
+		{ { 125, 198, 4040 },{ 255, 198, 8 },{ 125, 198, 456 },{ 255, 198, 8 }, },
+		{ { 133, 206, 4040 },{ 255, 206, 8 },{ 133, 206, 456 },{ 255, 206, 8 }, },
+		{ { 141, 214, 4040 },{ 255, 214, 8 },{ 141, 214, 456 },{ 255, 214, 8 }, },
+		{ { 149, 222, 4040 },{ 255, 222, 8 },{ 149, 222, 456 },{ 255, 222, 8 }, },
+		{ { 47, 183, 566 },{ 47, 183, 560 },{ 47, 0, 9 },{ 47, 0, 8 }, },
+		{ { 55, 191, 566 },{ 55, 191, 560 },{ 55, 0, 9 },{ 55, 0, 8 }, },
+		{ { 63, 199, 566 },{ 63, 199, 560 },{ 63, 0, 9 },{ 63, 0, 8 }, },
+		{ { 71, 207, 566 },{ 71, 207, 560 },{ 71, 0, 9 },{ 71, 0, 8 }, },
+		{ { 80, 216, 566 },{ 80, 216, 560 },{ 80, 0, 9 },{ 80, 0, 8 }, },
+		{ { 88, 224, 566 },{ 88, 224, 560 },{ 88, 0, 9 },{ 88, 0, 8 }, },
+		{ { 3, 233, 710 },{ 3, 233, 704 },{ 2, 96, 70 },{ 96, 2, 8 }, },
+		{ { 11, 241, 710 },{ 11, 241, 704 },{ 10, 104, 70 },{ 104, 10, 8 }, },
+		{ { 20, 250, 710 },{ 20, 250, 704 },{ 19, 113, 70 },{ 113, 19, 8 }, },
+		{ { 27, 121, 3654 },{ 27, 121, 3648 },{ 27, 121, 70 },{ 121, 27, 8 }, },
+		{ { 35, 129, 3654 },{ 35, 129, 3648 },{ 35, 129, 70 },{ 129, 35, 8 }, },
+		{ { 43, 137, 3654 },{ 43, 137, 3648 },{ 43, 137, 70 },{ 137, 43, 8 }, },
+		{ { 52, 146, 3654 },{ 52, 146, 3648 },{ 52, 146, 70 },{ 146, 52, 8 }, },
+		{ { 60, 154, 3654 },{ 60, 154, 3648 },{ 60, 154, 70 },{ 154, 60, 8 }, },
+		{ { 68, 162, 3654 },{ 68, 162, 3648 },{ 68, 162, 70 },{ 162, 68, 8 }, },
+		{ { 76, 170, 3654 },{ 76, 170, 3648 },{ 76, 170, 70 },{ 170, 76, 8 }, },
+		{ { 85, 179, 3654 },{ 85, 179, 3648 },{ 85, 179, 70 },{ 179, 85, 8 }, },
+		{ { 93, 187, 3654 },{ 93, 187, 3648 },{ 93, 187, 70 },{ 187, 93, 8 }, },
+		{ { 101, 195, 3654 },{ 101, 195, 3648 },{ 101, 195, 70 },{ 195, 101, 8 }, },
+		{ { 109, 203, 3654 },{ 109, 203, 3648 },{ 109, 203, 70 },{ 203, 109, 8 }, },
+		{ { 118, 212, 3654 },{ 118, 212, 3648 },{ 118, 212, 70 },{ 212, 118, 8 }, },
+		{ { 126, 220, 3654 },{ 126, 220, 3648 },{ 126, 220, 70 },{ 220, 126, 8 }, },
+		{ { 134, 228, 3654 },{ 134, 228, 3648 },{ 134, 228, 70 },{ 228, 134, 8 }, },
+		{ { 5, 236, 3680 },{ 142, 236, 3648 },{ 5, 236, 96 },{ 236, 142, 8 }, },
+		{ { 14, 245, 3680 },{ 151, 245, 3648 },{ 14, 245, 96 },{ 245, 151, 8 }, },
+		{ { 23, 159, 4040 },{ 159, 253, 3648 },{ 23, 159, 456 },{ 253, 159, 8 }, },
+		{ { 31, 167, 4040 },{ 255, 167, 8 },{ 31, 167, 456 },{ 255, 167, 8 }, },
+		{ { 39, 175, 4040 },{ 255, 175, 8 },{ 39, 175, 456 },{ 255, 175, 8 }, },
+		{ { 48, 184, 4040 },{ 255, 184, 8 },{ 48, 184, 456 },{ 255, 184, 8 }, },
+		{ { 56, 192, 4040 },{ 255, 192, 8 },{ 56, 192, 456 },{ 255, 192, 8 }, },
+		{ { 64, 200, 4040 },{ 255, 200, 8 },{ 64, 200, 456 },{ 255, 200, 8 }, },
+		{ { 72, 208, 4040 },{ 255, 208, 8 },{ 72, 208, 456 },{ 255, 208, 8 }, },
+
+	};
+
+	struct dxt5a_block
+	{
+		uint8 m_endpoints[2];
+
+		enum { cNumSelectorBytes = 6 };
+		uint8 m_selectors[cNumSelectorBytes];
+
+		inline void clear()
+		{
+			utils::zero_this(this);
+		}
+
+		inline uint get_low_alpha() const
+		{
+			return m_endpoints[0];
+		}
+
+		inline uint get_high_alpha() const
+		{
+			return m_endpoints[1];
+		}
+
+		inline void set_low_alpha(uint i)
+		{
+			CRND_ASSERT(i <= cUINT8_MAX);
+			m_endpoints[0] = static_cast<uint8>(i);
+		}
+
+		inline void set_high_alpha(uint i)
+		{
+			CRND_ASSERT(i <= cUINT8_MAX);
+			m_endpoints[1] = static_cast<uint8>(i);
+		}
+
+		inline bool is_alpha6_block() const { return get_low_alpha() <= get_high_alpha(); }
+
+		uint get_endpoints_as_word() const { return m_endpoints[0] | (m_endpoints[1] << 8); }
+		uint get_selectors_as_word(uint index) { CRND_ASSERT(index < 3); return m_selectors[index * 2] | (m_selectors[index * 2 + 1] << 8); }
+
+		inline uint get_selector(uint x, uint y) const
+		{
+			CRND_ASSERT((x < 4U) && (y < 4U));
+
+			uint selector_index = (y * 4) + x;
+			uint bit_index = selector_index * cDXT5SelectorBits;
+
+			uint byte_index = bit_index >> 3;
+			uint bit_ofs = bit_index & 7;
+
+			uint v = m_selectors[byte_index];
+			if (byte_index < (cNumSelectorBytes - 1))
+				v |= (m_selectors[byte_index + 1] << 8);
+
+			return (v >> bit_ofs) & 7;
+		}
+
+		inline void set_selector(uint x, uint y, uint val)
+		{
+			CRND_ASSERT((x < 4U) && (y < 4U) && (val < 8U));
+
+			uint selector_index = (y * 4) + x;
+			uint bit_index = selector_index * cDXT5SelectorBits;
+
+			uint byte_index = bit_index >> 3;
+			uint bit_ofs = bit_index & 7;
+
+			uint v = m_selectors[byte_index];
+			if (byte_index < (cNumSelectorBytes - 1))
+				v |= (m_selectors[byte_index + 1] << 8);
+
+			v &= (~(7 << bit_ofs));
+			v |= (val << bit_ofs);
+
+			m_selectors[byte_index] = static_cast<uint8>(v);
+			if (byte_index < (cNumSelectorBytes - 1))
+				m_selectors[byte_index + 1] = static_cast<uint8>(v >> 8);
+		}
+
+		enum { cMaxSelectorValues = 8 };
+
+		static uint get_block_values6(color_rgba* pDst, uint l, uint h)
+		{
+			pDst[0].a = static_cast<uint8>(l);
+			pDst[1].a = static_cast<uint8>(h);
+			pDst[2].a = static_cast<uint8>((l * 4 + h) / 5);
+			pDst[3].a = static_cast<uint8>((l * 3 + h * 2) / 5);
+			pDst[4].a = static_cast<uint8>((l * 2 + h * 3) / 5);
+			pDst[5].a = static_cast<uint8>((l + h * 4) / 5);
+			pDst[6].a = 0;
+			pDst[7].a = 255;
+			return 6;
+		}
+
+		static uint get_block_values8(color_rgba* pDst, uint l, uint h)
+		{
+			pDst[0].a = static_cast<uint8>(l);
+			pDst[1].a = static_cast<uint8>(h);
+			pDst[2].a = static_cast<uint8>((l * 6 + h) / 7);
+			pDst[3].a = static_cast<uint8>((l * 5 + h * 2) / 7);
+			pDst[4].a = static_cast<uint8>((l * 4 + h * 3) / 7);
+			pDst[5].a = static_cast<uint8>((l * 3 + h * 4) / 7);
+			pDst[6].a = static_cast<uint8>((l * 2 + h * 5) / 7);
+			pDst[7].a = static_cast<uint8>((l + h * 6) / 7);
+			return 8;
+		}
+
+		static uint get_block_values(color_rgba* pDst, uint l, uint h)
+		{
+			if (l > h)
+				return get_block_values8(pDst, l, h);
+			else
+				return get_block_values6(pDst, l, h);
+		}
+	};
+
+	static void convert_etc1_to_dxt5a(dxt5a_block *pDst_block, const decoder_etc_block *pSrc_block) //, const selector *pSelector)
+	{
+		//const uint low_selector = pSelector->m_lo_selector;
+		//const uint high_selector = pSelector->m_hi_selector;
+
+		// TODO: Precompute the selector's low_selector/high_selector while unpacking selector palettes (not every block)!
+		uint selector_hist[4] = { 0, 0, 0, 0 };
+
+#define DO_X(x) { \
+		const uint byte_ofs = 7 - (((x) * 4) >> 3); \
+		const uint lsb_bits = pSrc_block->m_bytes[byte_ofs] >> (((x) & 1) * 4); \
+		const uint msb_bits = pSrc_block->m_bytes[byte_ofs - 2] >> (((x) & 1) * 4); \
+		const uint lookup = (lsb_bits & 0xF)| ((msb_bits & 0xF) << 4); \
+		selector_hist[g_etc1_x_selector_unpack[0][lookup]]++; \
+		selector_hist[g_etc1_x_selector_unpack[1][lookup]]++; \
+		selector_hist[g_etc1_x_selector_unpack[2][lookup]]++; \
+		selector_hist[g_etc1_x_selector_unpack[3][lookup]]++; \
+		}
+		DO_X(0)
+		DO_X(1)
+		DO_X(2)
+		DO_X(3)
+#undef DO_X
+
+		uint low_selector = 3;
+		uint high_selector = 0;
+		uint total_unique_selectors = 0;
+
+		for (uint j = 0; j < 4; j++)
+		{
+			static const uint8 s_etc1_to_selector_index[cETC1SelectorValues] = { 2, 3, 1, 0 };
+			if (selector_hist[j])
+			{
+				const int i = s_etc1_to_selector_index[j];
+				if (i < low_selector) low_selector = i;
+				if (i > high_selector) high_selector = i;
+				total_unique_selectors++;
+			}
+		}
+
+		const color_rgba base_color(decoder_etc_block::unpack_color5(pSrc_block->get_base5_color(), false));
+		const uint inten_table = pSrc_block->get_inten_table(0);
+
+		if (low_selector == high_selector)
+		{
+			color_rgba block_colors[4];
+
+			decoder_etc_block::get_block_colors5(block_colors, base_color, inten_table);
+
+			const uint g = block_colors[low_selector].g;
+
+			pDst_block->set_low_alpha(g);
+			pDst_block->set_high_alpha(g);
+			pDst_block->m_selectors[0] = 0;
+			pDst_block->m_selectors[1] = 0;
+			pDst_block->m_selectors[2] = 0;
+			pDst_block->m_selectors[3] = 0;
+			return;
+		}
+		else if (total_unique_selectors == 2) //(pSelector->m_num_unique_selectors == 2)
+		{
+			color_rgba block_colors[4];
+
+			decoder_etc_block::get_block_colors5(block_colors, base_color, inten_table);
+
+			const uint g0 = block_colors[low_selector].g;
+			const uint g1 = block_colors[high_selector].g;
+
+			pDst_block->set_low_alpha(g0);
+			pDst_block->set_high_alpha(g1);
+
+			for (uint y = 0; y < 4; y++)
+			{
+				for (uint x = 0; x < 4; x++)
+				{
+					uint s = pSrc_block->get_selector(x, y);
+					pDst_block->set_selector(x, y, (s == high_selector) ? 1 : 0);
+				}
+			}
+
+			return;
+		}
+
+		uint selector_range_table = 0;
+		for (selector_range_table = 0; selector_range_table < NUM_DXT5A_SELECTOR_RANGES; selector_range_table++)
+			if ((low_selector == s_dxt5a_selector_ranges[selector_range_table].m_low) && (high_selector == s_dxt5a_selector_ranges[selector_range_table].m_high))
+				break;
+		if (selector_range_table >= NUM_DXT5A_SELECTOR_RANGES)
+			selector_range_table = 0;
+
+		const etc1_g_to_dxt5a_conversion *pTable_entry = &g_etc1_g_to_dxt5a[base_color.g + inten_table * 32][selector_range_table];
+
+		pDst_block->set_low_alpha(pTable_entry->m_lo);
+		pDst_block->set_high_alpha(pTable_entry->m_hi);
+
+		// TODO: Optimize this!
+		for (uint y = 0; y < 4; y++)
+		{
+			for (uint x = 0; x < 4; x++)
+			{
+				uint s = pSrc_block->get_selector(x, y);
+
+				uint ds = (pTable_entry->m_trans >> (s * 3)) & 7;
+
+				pDst_block->set_selector(x, y, ds);
+			}
+		}
+	}
 #endif
 
 class crn_unpacker {
@@ -3852,7 +4359,7 @@ class crn_unpacker {
 
   bool unpack_level(
       void** pDst, uint32 dst_size_in_bytes, uint32 row_pitch_in_bytes,
-      uint32 level_index, transcode_format output_format) {
+      uint32 level_index, transcode_format output_format, uint32 block_pitch_in_dwords) {
     uint32 cur_level_ofs = m_pHeader->m_level_ofs[level_index];
 
     uint32 next_level_ofs = m_data_size;
@@ -3861,13 +4368,13 @@ class crn_unpacker {
 
     CRND_ASSERT(next_level_ofs > cur_level_ofs);
 
-    return unpack_level(m_pData + cur_level_ofs, next_level_ofs - cur_level_ofs, pDst, dst_size_in_bytes, row_pitch_in_bytes, level_index, output_format);
+    return unpack_level(m_pData + cur_level_ofs, next_level_ofs - cur_level_ofs, pDst, dst_size_in_bytes, row_pitch_in_bytes, level_index, output_format, block_pitch_in_dwords);
   }
 
   bool unpack_level(
       const void* pSrc, uint32 src_size_in_bytes,
       void** pDst, uint32 dst_size_in_bytes, uint32 row_pitch_in_bytes,
-      uint32 level_index, transcode_format output_format) {
+      uint32 level_index, transcode_format output_format, uint32 block_pitch_in_dwords) {
 
 #ifdef CRND_BUILD_DEBUG
     for (uint32 f = 0; f < m_pHeader->m_faces; f++)
@@ -3879,7 +4386,14 @@ class crn_unpacker {
     const uint32 height = math::maximum(m_pHeader->m_height >> level_index, 1U);
     const uint32 blocks_x = (width + 3U) >> 2U;
     const uint32 blocks_y = (height + 3U) >> 2U;
-    const uint32 block_size = m_pHeader->m_format == cCRNFmtDXT1 || m_pHeader->m_format == cCRNFmtDXT5A || m_pHeader->m_format == cCRNFmtETC1 || m_pHeader->m_format == cCRNFmtETC2 || m_pHeader->m_format == cCRNFmtETC1S ? 8 : 16;
+
+	uint32 block_size = m_pHeader->m_format == cCRNFmtDXT1 || m_pHeader->m_format == cCRNFmtDXT5A || m_pHeader->m_format == cCRNFmtETC1 || m_pHeader->m_format == cCRNFmtETC2 || m_pHeader->m_format == cCRNFmtETC1S ? 8 : 16;
+	if ((m_pHeader->m_format == cCRNFmtETC1S) && (output_format != cTFUnchanged))
+	{
+		if (!block_pitch_in_dwords)
+			return false;
+		block_size = block_pitch_in_dwords * 4;
+	}
 
     uint32 minimal_row_pitch = block_size * blocks_x;
     if (!row_pitch_in_bytes)
@@ -3896,7 +4410,7 @@ class crn_unpacker {
     switch (m_pHeader->m_format) {
       case cCRNFmtDXT1:
       case cCRNFmtETC1S:
-        status = unpack_dxt1((uint8**)pDst, row_pitch_in_bytes, blocks_x, blocks_y, output_format);
+        status = unpack_dxt1_or_etc1s((uint8**)pDst, row_pitch_in_bytes, blocks_x, blocks_y, output_format, block_pitch_in_dwords);
         break;
       case cCRNFmtDXT5:
       case cCRNFmtDXT5_CCxY:
@@ -4213,11 +4727,11 @@ class crn_unpacker {
     x = (x & msk) | (v & ~msk);
   }
 
-  bool unpack_dxt1(uint8** pDst, uint32 output_pitch_in_bytes, uint32 output_width, uint32 output_height, transcode_format output_format) {
+  bool unpack_dxt1_or_etc1s(uint8** pDst, uint32 output_pitch_in_bytes, uint32 output_width, uint32 output_height, transcode_format output_format, uint block_pitch_in_dwords) {
     const uint32 num_color_endpoints = m_color_endpoints.size();
     const uint32 width = output_width + 1 & ~1;
     const uint32 height = output_height + 1 & ~1;
-    const int32 delta_pitch_in_dwords = (output_pitch_in_bytes >> 2) - (width << 1);
+    const int32 delta_pitch_in_dwords = (output_pitch_in_bytes >> 2) - (width * block_pitch_in_dwords);
 
     if (m_block_buffer.size() < width)
       m_block_buffer.resize(width);
@@ -4229,7 +4743,7 @@ class crn_unpacker {
       uint32* pData = (uint32*)pDst[f];
       for (uint32 y = 0; y < height; y++, pData += delta_pitch_in_dwords) {
         bool visible = y < output_height;
-        for (uint32 x = 0; x < width; x++, pData += 2) {
+        for (uint32 x = 0; x < width; x++, pData += block_pitch_in_dwords) {
           visible = visible && x < output_width;
           if (!(y & 1) && !(x & 1))
             reference_group = m_codec.decode(m_reference_encoding_dm);
@@ -4273,6 +4787,16 @@ class crn_unpacker {
 					blk.m_uint32[1] = m_color_selectors[color_selector_index];
 										
 					convert_etc1_to_dxt1(reinterpret_cast<dxt1_block *>(pData), &blk);
+
+					break;
+				}
+				case cTFDXT5A:
+				{
+					decoder_etc_block blk;
+					blk.m_uint32[0] = m_color_endpoints[color_endpoint_index];
+					blk.m_uint32[1] = m_color_selectors[color_selector_index];
+
+					convert_etc1_to_dxt5a(reinterpret_cast<dxt5a_block *>(pData), &blk);
 
 					break;
 				}
@@ -4652,7 +5176,7 @@ bool crnd_get_data(crnd_unpack_context pContext, const void** ppData, uint32* pD
 bool crnd_unpack_level(
     crnd_unpack_context pContext,
     void** pDst, uint32 dst_size_in_bytes, uint32 row_pitch_in_bytes,
-    uint32 level_index, transcode_format output_format) {
+    uint32 level_index, transcode_format output_format, uint32 block_pitch_in_dwords) {
   if ((!pContext) || (!pDst) || (dst_size_in_bytes < 8U) || (level_index >= cCRNMaxLevels))
     return false;
 
@@ -4661,14 +5185,14 @@ bool crnd_unpack_level(
   if (!pUnpacker->is_valid())
     return false;
 
-  return pUnpacker->unpack_level(pDst, dst_size_in_bytes, row_pitch_in_bytes, level_index, output_format);
+  return pUnpacker->unpack_level(pDst, dst_size_in_bytes, row_pitch_in_bytes, level_index, output_format, block_pitch_in_dwords);
 }
 
 bool crnd_unpack_level_segmented(
     crnd_unpack_context pContext,
     const void* pSrc, uint32 src_size_in_bytes,
     void** pDst, uint32 dst_size_in_bytes, uint32 row_pitch_in_bytes,
-    uint32 level_index, transcode_format output_format = cTFUnchanged) {
+    uint32 level_index, transcode_format output_format, crn_uint32 block_pitch_in_dwords) {
   if ((!pContext) || (!pSrc) || (!pDst) || (dst_size_in_bytes < 8U) || (level_index >= cCRNMaxLevels))
     return false;
 
@@ -4677,7 +5201,7 @@ bool crnd_unpack_level_segmented(
   if (!pUnpacker->is_valid())
     return false;
 
-  return pUnpacker->unpack_level(pSrc, src_size_in_bytes, pDst, dst_size_in_bytes, row_pitch_in_bytes, level_index, output_format);
+  return pUnpacker->unpack_level(pSrc, src_size_in_bytes, pDst, dst_size_in_bytes, row_pitch_in_bytes, level_index, output_format, block_pitch_in_dwords);
 }
 
 bool crnd_unpack_end(crnd_unpack_context pContext) {
